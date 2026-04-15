@@ -1,0 +1,8 @@
+[Interface]
+Address = {{ .Nodes.US.WGAddress }}
+ListenPort = {{ .Nodes.US.WGPort }}
+PrivateKey = <replace-with-us-private-key>
+
+[Peer]
+PublicKey = <replace-with-hk-public-key>
+AllowedIPs = {{ cidrIP .Nodes.HK.WGAddress }}/32

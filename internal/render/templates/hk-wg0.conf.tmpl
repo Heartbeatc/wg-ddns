@@ -1,0 +1,10 @@
+[Interface]
+Address = {{ .Nodes.HK.WGAddress }}
+PrivateKey = <replace-with-hk-private-key>
+MTU = 1420
+
+[Peer]
+PublicKey = <replace-with-us-public-key>
+Endpoint = {{ .Domains.WireGuard }}:{{ .Nodes.US.WGPort }}
+AllowedIPs = {{ cidrIP .Nodes.US.WGAddress }}/32
+PersistentKeepalive = 25

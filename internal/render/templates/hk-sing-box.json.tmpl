@@ -1,0 +1,23 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "{{ cidrIP .Nodes.HK.WGAddress }}",
+      "listen_port": {{ listenPort .Nodes.HK.SocksListen }},
+      "users": []
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "final": "direct"
+  }
+}
