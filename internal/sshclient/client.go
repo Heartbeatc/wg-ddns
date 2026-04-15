@@ -21,14 +21,16 @@ type Client struct {
 }
 
 func Dial(node model.Node) (*Client, error) {
+	sshAddr := node.SSHAddr()
+
 	auth, err := authMethod(node.SSH)
 	if err != nil {
-		return nil, fmt.Errorf("prepare ssh auth for %s: %w", node.Host, err)
+		return nil, fmt.Errorf("prepare ssh auth for %s: %w", sshAddr, err)
 	}
 
 	hostKeyCallback, err := hostKeyCallback(node.SSH)
 	if err != nil {
-		return nil, fmt.Errorf("prepare host key callback for %s: %w", node.Host, err)
+		return nil, fmt.Errorf("prepare host key callback for %s: %w", sshAddr, err)
 	}
 
 	cfg := &ssh.ClientConfig{
@@ -38,7 +40,7 @@ func Dial(node model.Node) (*Client, error) {
 		Timeout:         10 * time.Second,
 	}
 
-	addr := net.JoinHostPort(node.Host, strconv.Itoa(node.SSH.Port))
+	addr := net.JoinHostPort(sshAddr, strconv.Itoa(node.SSH.Port))
 	c, err := ssh.Dial("tcp", addr, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)

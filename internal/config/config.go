@@ -77,8 +77,8 @@ func DefaultProject() model.Project {
 		},
 		Checks: model.HealthCheck{
 			TestURL:          "https://ifconfig.me",
-			ExitCheckURL:     "https://ifconfig.me/country_code",
-			PublicIPCheckURL: "https://ifconfig.me/ip",
+			ExitCheckURL:     "https://api.ipify.org",
+			PublicIPCheckURL: "https://api.ipify.org",
 			ExitLocation:     "",
 		},
 		Notifications: model.Notifications{
@@ -178,7 +178,7 @@ func Validate(project model.Project) error {
 	// Panel guide & health checks
 	require("panel_guide.outbound_tag", project.PanelGuide.OutboundTag)
 	require("panel_guide.route_user", project.PanelGuide.RouteUser)
-	require("healthcheck.exit_check_url", project.Checks.ExitCheckURL)
+	require("healthcheck.exit_check_url (必须返回纯文本公网 IP)", project.Checks.ExitCheckURL)
 	require("healthcheck.public_ip_check_url", project.Checks.PublicIPCheckURL)
 
 	if len(missing) > 0 {

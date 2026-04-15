@@ -20,7 +20,7 @@ func Build(project model.Project) []Step {
 			Details: []string{
 				fmt.Sprintf("在 %s 上安装或验证 WireGuard", project.Nodes.US.Host),
 				fmt.Sprintf("写入 wg0.conf，地址 %s，监听端口 %d", project.Nodes.US.WGAddress, project.Nodes.US.WGPort),
-				fmt.Sprintf("SSH: %s@%s:%d", project.Nodes.US.SSH.User, project.Nodes.US.Host, project.Nodes.US.SSH.Port),
+				fmt.Sprintf("SSH: %s@%s:%d", project.Nodes.US.SSH.User, project.Nodes.US.SSHAddr(), project.Nodes.US.SSH.Port),
 			},
 		},
 		{
@@ -29,7 +29,7 @@ func Build(project model.Project) []Step {
 				fmt.Sprintf("在 %s 上安装或验证 WireGuard", project.Nodes.HK.Host),
 				fmt.Sprintf("安装或验证 %s", project.Nodes.HK.Proxy),
 				fmt.Sprintf("SOCKS 监听 %s:%s（仅入口节点可达）", address.Host(project.Nodes.HK.SocksListen), address.Port(project.Nodes.HK.SocksListen)),
-				fmt.Sprintf("SSH: %s@%s:%d", project.Nodes.HK.SSH.User, project.Nodes.HK.Host, project.Nodes.HK.SSH.Port),
+				fmt.Sprintf("SSH: %s@%s:%d", project.Nodes.HK.SSH.User, project.Nodes.HK.SSHAddr(), project.Nodes.HK.SSH.Port),
 			},
 		},
 		{

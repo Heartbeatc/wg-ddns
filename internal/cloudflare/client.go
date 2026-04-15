@@ -49,13 +49,24 @@ type responseError struct {
 	Message string `json:"message"`
 }
 
-func New(cfg model.Cloudflare) (*Client, error) {
-	token := cfg.Token
-	if token == "" {
-		token = os.Getenv(cfg.TokenEnv)
+// ResolveToken determines the Cloudflare API token from config and environment.
+// Priority: environment variable (cfg.TokenEnv) > config file (cfg.Token).
+func ResolveToken(cfg model.Cloudflare) (token, source string, err error) {
+	if cfg.TokenEnv != "" {
+		if v := strings.TrimSpace(os.Getenv(cfg.TokenEnv)); v != "" {
+			return v, "环境变量 " + cfg.TokenEnv, nil
+		}
 	}
-	if token == "" {
-		return nil, fmt.Errorf("cloudflare token 为空（已检查 token 字段和环境变量 %q）", cfg.TokenEnv)
+	if v := strings.TrimSpace(cfg.Token); v != "" {
+		return v, "配置文件 cloudflare.token", nil
+	}
+	return "", "", fmt.Errorf("cloudflare token 为空（已检查: 环境变量 %q、配置文件 cloudflare.token）", cfg.TokenEnv)
+}
+
+func New(cfg model.Cloudflare) (*Client, error) {
+	token, _, err := ResolveToken(cfg)
+	if err != nil {
+		return nil, err
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: 15 * time.Second},

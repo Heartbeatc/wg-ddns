@@ -119,8 +119,8 @@ func runMenu(stdout io.Writer) error {
 	fmt.Fprintln(stdout, "========================================")
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "当前配置: %s\n", config.DefaultPath)
-	fmt.Fprintf(stdout, "  入口节点: %s@%s\n", project.Nodes.US.SSH.User, project.Nodes.US.Host)
-	fmt.Fprintf(stdout, "  出口节点: %s@%s\n", project.Nodes.HK.SSH.User, project.Nodes.HK.Host)
+	fmt.Fprintf(stdout, "  入口节点: %s@%s\n", project.Nodes.US.SSH.User, project.Nodes.US.SSHAddr())
+	fmt.Fprintf(stdout, "  出口节点: %s@%s\n", project.Nodes.HK.SSH.User, project.Nodes.HK.SSHAddr())
 	fmt.Fprintf(stdout, "  对外域名: %s\n", project.Domains.Entry)
 	fmt.Fprintln(stdout)
 

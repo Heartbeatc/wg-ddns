@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"wg-ddns/internal/address"
 	"wg-ddns/internal/model"
 	"wg-ddns/internal/sshclient"
 )
@@ -131,24 +130,44 @@ func checkExitSocks(client sshclient.Runner, project model.Project) Probe {
 }
 
 func checkEgress(client sshclient.Runner, project model.Project) Probe {
-	command := fmt.Sprintf(
-		"curl -fsS --max-time 20 --socks5-hostname %s %s",
+	ipCmd := fmt.Sprintf(
+		"curl -4fsS --max-time 20 --socks5-hostname %s %s",
 		shellEscape(project.Nodes.HK.SocksListen),
 		shellEscape(project.Checks.ExitCheckURL),
 	)
-	out, err := client.RunShell(command)
+	out, err := client.RunShell(ipCmd)
 	if err != nil {
-		return Probe{Name: "出口验证", Status: "FAIL", Detail: strings.TrimSpace(out)}
+		return Probe{Name: "出口验证", Status: "FAIL", Detail: "连通性失败: " + strings.TrimSpace(out)}
 	}
-	value := strings.TrimSpace(out)
+	exitIP := strings.TrimSpace(out)
+
+	if !IsPublicIPv4(exitIP) {
+		return Probe{
+			Name:   "出口验证",
+			Status: "FAIL",
+			Detail: fmt.Sprintf("exit_check_url 返回的不是合法公网 IPv4: %q（该字段必须指向一个返回纯文本公网 IP 的接口，如 https://api.ipify.org）", exitIP),
+		}
+	}
 
 	if project.Checks.ExitLocation == "" {
-		return Probe{Name: "出口验证", Status: "PASS", Detail: fmt.Sprintf("出口位置: %s（未配置预期地区，跳过校验）", value)}
+		return Probe{Name: "出口验证", Status: "PASS", Detail: fmt.Sprintf("出口 IP: %s（未配置预期地区，跳过校验）", exitIP)}
 	}
-	if value != project.Checks.ExitLocation {
-		return Probe{Name: "出口验证", Status: "FAIL", Detail: fmt.Sprintf("期望 %s，实际 %s", project.Checks.ExitLocation, value)}
+
+	geoCmd := fmt.Sprintf(
+		"curl -4fsS --max-time 10 --socks5-hostname %s %s",
+		shellEscape(project.Nodes.HK.SocksListen),
+		shellEscape(fmt.Sprintf("https://ipinfo.io/%s/country", exitIP)),
+	)
+	geoOut, geoErr := client.RunShell(geoCmd)
+	if geoErr != nil {
+		return Probe{Name: "出口验证", Status: "PASS", Detail: fmt.Sprintf("出口 IP: %s（地区查询失败，跳过校验）", exitIP)}
 	}
-	return Probe{Name: "出口验证", Status: "PASS", Detail: fmt.Sprintf("经 %s 出口位置为 %s", address.Host(project.Nodes.HK.SocksListen), value)}
+	country := strings.TrimSpace(geoOut)
+
+	if !strings.EqualFold(country, project.Checks.ExitLocation) {
+		return Probe{Name: "出口验证", Status: "FAIL", Detail: fmt.Sprintf("期望 %s，实际 %s（出口 IP: %s）", project.Checks.ExitLocation, country, exitIP)}
+	}
+	return Probe{Name: "出口验证", Status: "PASS", Detail: fmt.Sprintf("出口 IP: %s，地区: %s", exitIP, country)}
 }
 
 var fallbackIPServices = []string{

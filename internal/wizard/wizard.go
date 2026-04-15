@@ -32,7 +32,8 @@ func AskRunContext(p *Prompter) model.RunContext {
 
 // nodeInput holds user-supplied node connection info collected by the wizard.
 type nodeInput struct {
-	host       string
+	host       string // public IP of the node
+	sshHost    string // SSH connection address (domain or IP); empty means same as host
 	user       string
 	authMethod string
 	password   string
@@ -154,8 +155,9 @@ func RunSetup(w io.Writer) (model.Project, model.RunContext, bool, error) {
 		},
 		Nodes: model.Nodes{
 			US: model.Node{
-				Role: "entry",
-				Host: entry.host,
+				Role:    "entry",
+				Host:    entry.host,
+				SSHHost: entry.sshHost,
 				SSH: model.SSH{
 					User:                  entry.user,
 					Port:                  22,
@@ -175,8 +177,9 @@ func RunSetup(w io.Writer) (model.Project, model.RunContext, bool, error) {
 				},
 			},
 			HK: model.Node{
-				Role: "exit",
-				Host: exit.host,
+				Role:    "exit",
+				Host:    exit.host,
+				SSHHost: exit.sshHost,
 				SSH: model.SSH{
 					User:                  exit.user,
 					Port:                  22,
@@ -205,8 +208,8 @@ func RunSetup(w io.Writer) (model.Project, model.RunContext, bool, error) {
 		},
 		Checks: model.HealthCheck{
 			TestURL:          "https://ifconfig.me",
-			ExitCheckURL:     "https://ifconfig.me/country_code",
-			PublicIPCheckURL: "https://ifconfig.me/ip",
+			ExitCheckURL:     "https://api.ipify.org",
+			PublicIPCheckURL: "https://api.ipify.org",
 			ExitLocation:     exitLocation,
 		},
 	}
@@ -236,11 +239,19 @@ func collectNodeInfo(w io.Writer, p *Prompter, label string, isLocal bool) nodeI
 		return nodeInput{host: host, user: "root"}
 	}
 
-	host := p.LineWith(label+"的 IP 地址", "", validateIP)
+	host := p.LineWith(label+"的公网 IP 地址", "", validateIP)
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  SSH 连接地址用于本工具远程管理该节点。")
+	fmt.Fprintln(w, "  如果节点 IP 可能变化（如入口节点换 IP，或出口节点使用家宽动态 IP），")
+	fmt.Fprintln(w, "  推荐填写一个稳定的域名，这样即使 IP 漂移，工具仍能连上节点。")
+	fmt.Fprintln(w, "  如果 IP 不会变化，直接回车使用公网 IP 即可。")
+	sshHost := p.OptionalLine("SSH 连接地址（域名或 IP，留空则使用公网 IP）")
+
 	user := p.Line("SSH 用户名", "root")
 	authIdx := p.Select("SSH 登录方式:", []string{"密码", "私钥文件"})
 
-	ni := nodeInput{host: host, user: user, authMethod: "password"}
+	ni := nodeInput{host: host, sshHost: sshHost, user: user, authMethod: "password"}
 	if authIdx == 0 {
 		ni.password = p.Password("SSH 密码")
 	} else {
@@ -254,7 +265,7 @@ func collectNodeInfo(w io.Writer, p *Prompter, label string, isLocal bool) nodeI
 // On success it asks for confirmation; on failure it falls back to manual input.
 func detectOrAskIP(w io.Writer, p *Prompter, label string) string {
 	localClient := sshclient.NewLocal()
-	detectedIP, detectErr := health.DetectPublicIPv4(localClient, "https://ifconfig.me/ip")
+	detectedIP, detectErr := health.DetectPublicIPv4(localClient, "https://api.ipify.org")
 	localClient.Close()
 
 	if detectErr == nil {
@@ -341,11 +352,14 @@ func printSummary(w io.Writer, project model.Project, rc model.RunContext) {
 
 func printNodeSummary(w io.Writer, label string, node model.Node, isLocal bool) {
 	fmt.Fprintf(w, "%s:\n", label)
-	fmt.Fprintf(w, "  IP:       %s\n", node.Host)
+	fmt.Fprintf(w, "  公网 IP:  %s\n", node.Host)
 	if isLocal {
 		fmt.Fprintln(w, "  部署方式: 本机")
 	} else {
-		fmt.Fprintf(w, "  SSH:      %s@%s (%s)\n", node.SSH.User, node.Host, authLabel(node.SSH.AuthMethod))
+		fmt.Fprintf(w, "  SSH:      %s@%s (%s)\n", node.SSH.User, node.SSHAddr(), authLabel(node.SSH.AuthMethod))
+		if node.SSHHost != "" && node.SSHHost != node.Host {
+			fmt.Fprintf(w, "  SSH 地址: %s（独立于公网 IP）\n", node.SSHHost)
+		}
 	}
 	fmt.Fprintf(w, "  WG 地址:  %s\n", node.WGAddress)
 }

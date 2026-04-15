@@ -30,12 +30,32 @@ wgstack 是一个部署工具，帮你把两台服务器连成一条代理链路
 
 | 项目 | 说明 |
 |------|------|
-| 入口节点 | 需要 root 权限，知道 IP 地址和 SSH 登录方式 |
-| 出口节点 | 需要 root 权限，知道 IP 地址和 SSH 登录方式 |
+| 入口节点 | 需要 root 权限，知道公网 IP 和 SSH 登录方式 |
+| 出口节点 | 需要 root 权限，知道公网 IP 和 SSH 登录方式 |
 | Cloudflare API Token | 在 Cloudflare 控制台创建，需要 Zone DNS 编辑权限 |
 | 域名 | 一个对外域名即可（面板和代理入口通常共用同一个） |
 
 SSH 支持两种登录方式：**密码** 或 **私钥文件**（如 `id_rsa.pem`）。
+
+### 关于 SSH 连接地址
+
+如果你在**本地电脑或管理机**上运行 wgstack，工具需要通过 SSH 连接到目标节点。默认情况下，SSH 使用你填写的节点公网 IP。
+
+**如果节点的公网 IP 可能变化，推荐配置一个稳定的 SSH 连接域名**，这样即使 IP 漂移，wgstack 仍然能通过域名连上节点执行 deploy、health、reconcile 等操作。常见的动态 IP 场景：
+
+- **入口节点**：换机器、换 IP 后，旧 IP 立即失效
+- **出口节点**：使用家宽或动态公网 IP 的 VPS，IP 可能随时变化
+
+配置方法：
+
+- 在 `wgstack.json` 的节点配置中设置 `"ssh_host"`，例如：
+  - 入口节点：`"ssh_host": "ssh.entry.example.com"`
+  - 出口节点：`"ssh_host": "ssh.exit.example.com"`
+- 这个域名必须**直连目标服务器**，不应走 Cloudflare 代理（Proxy 关闭，即 DNS only）
+- 它可以与对外代理域名不同
+- 向导中也会引导你填写
+
+如果你直接在某台目标节点本机上运行 wgstack，则该节点不需要 SSH——程序会直接在本机操作。
 
 ## 关于域名
 
@@ -90,8 +110,8 @@ wgstack
 ### 向导流程
 
 1. **选择运行位置** — 你在哪台机器上运行（决定需要哪些 SSH 信息）
-2. **入口节点** — 填写 IP 和 SSH 信息（如果在本机运行则跳过 SSH）
-3. **出口节点** — 填写 IP 和 SSH 信息（如果在本机运行则跳过 SSH）
+2. **入口节点** — 填写公网 IP、SSH 连接地址（可选，推荐域名）和 SSH 信息
+3. **出口节点** — 填写公网 IP、SSH 连接地址（可选）和 SSH 信息
 4. **Cloudflare** — 主域名和 API Token
 5. **域名** — 输入你的对外域名，确认面板和 WG Endpoint 是否复用（默认都复用）
 6. **面板与检查** — 出站标签、用户标识、出口地区代码（可选）
@@ -167,7 +187,7 @@ wgstack
 ### 你可以进一步做的
 
 - **用环境变量代替明文密码**：在 `wgstack.json` 中把 `password` 留空，设置 `password_env` 为环境变量名
-- **Cloudflare Token 同理**：把 `token` 留空，设置 `token_env` 为 `CLOUDFLARE_API_TOKEN`
+- **Cloudflare Token 推荐用环境变量**：设置 `token_env` 为 `CLOUDFLARE_API_TOKEN`，然后通过 `export CLOUDFLARE_API_TOKEN=xxx` 注入。**如果环境变量和配置文件中都有 token，环境变量优先**——这意味着你可以随时通过环境变量覆盖旧 token，无需修改配置文件
 - **不要把 `wgstack.json` 提交到 Git**：`.gitignore` 已经包含了它
 - **优先使用私钥登录**：更安全也更方便
 
@@ -218,9 +238,13 @@ wgstack reconcile
 
 自动检测新 IP、更新 DNS、刷新隧道。加 `--dry-run` 可预览变更。
 
+**提示**：如果你在本地/管理机上运行且没有配置 `ssh_host` 域名，节点 IP 变化后工具自身可能连不上旧 IP。推荐给 IP 可能变化的节点配置一个稳定的 SSH 连接域名（DNS only，不走 Cloudflare 代理），详见上方「关于 SSH 连接地址」。
+
 ### 出口 IP 变了
 
-不需要操作。WireGuard 隧道不受影响（出口节点是主动连接方，会自动重连）。
+WireGuard 隧道不受影响——出口节点是主动连接方，会自动重连。
+
+但如果你在本地/管理机上运行 `wgstack health` 或 `wgstack apply`，且出口节点的 `host` 写的是旧公网 IP（没有配置 `ssh_host`），工具会在 SSH 阶段失联。**如果出口节点使用家宽等动态公网 IP，强烈推荐配置 `ssh_host` 域名**，详见上方「关于 SSH 连接地址」。
 
 ### 检查连通性
 
@@ -244,13 +268,16 @@ wgstack
 
 ### SSH 连接失败
 
-- 检查 IP 地址是否正确
+- 检查 SSH 连接地址是否正确（如果配置了 `ssh_host`，检查该域名是否解析到当前节点 IP）
+- 如果节点 IP 刚变过（入口换 IP 或出口动态 IP 漂移），且没有配置 `ssh_host` 域名，需要先更新配置文件中的 `host`
 - 确认 SSH 端口是 22
 - 检查用户名和密码/私钥是否正确
 - 确认防火墙允许 SSH
 
 ### Cloudflare Token 不对
 
+- 环境变量优先于配置文件：如果设置了 `token_env` 对应的环境变量，它会覆盖 `token` 字段
+- 如果 `curl` 能成功但 wgstack 报 `Invalid access token`，检查配置文件中是否残留了旧的 `token` 值（环境变量应该会覆盖它，但确认 `token_env` 是否正确填写）
 - 在 [Cloudflare 控制台](https://dash.cloudflare.com/profile/api-tokens) 检查 Token
 - 需要 **Zone - DNS - Edit** 权限
 - 确认 Zone 域名拼写正确
@@ -260,6 +287,7 @@ wgstack
 - 运行 `wgstack health --live` 查看各项状态
 - WireGuard 握手为 0 说明隧道未建立
 - 检查防火墙是否放通了 WireGuard 端口（默认 51820）
+- 如果出口验证报「返回的不是合法公网 IPv4」，检查 `healthcheck.exit_check_url`——该字段必须指向一个返回纯文本公网 IP 的接口（如 `https://api.ipify.org`），不能是返回 HTML、JSON 或国家代码的地址
 
 ### 部署失败了
 

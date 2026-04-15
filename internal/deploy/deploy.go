@@ -93,12 +93,12 @@ func deployNode(stdout io.Writer, entry nodeEntry, files []RemoteFile, activate 
 	if entry.isLocal {
 		fmt.Fprintf(stdout, "本机部署 %s\n", entry.label)
 	} else {
-		fmt.Fprintf(stdout, "连接 %s (%s)\n", entry.label, entry.node.Host)
+		fmt.Fprintf(stdout, "连接 %s (%s)\n", entry.label, entry.node.SSHAddr())
 	}
 
 	client, err := sshclient.DialOrLocal(entry.node, entry.isLocal)
 	if err != nil {
-		return fmt.Errorf("无法连接 %s (%s): %w", entry.label, entry.node.Host, err)
+		return fmt.Errorf("无法连接 %s (%s): %w", entry.label, entry.node.SSHAddr(), err)
 	}
 	defer client.Close()
 

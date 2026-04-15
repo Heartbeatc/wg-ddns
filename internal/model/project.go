@@ -69,6 +69,7 @@ type Nodes struct {
 type Node struct {
 	Role            string     `json:"role"`
 	Host            string     `json:"host"`
+	SSHHost         string     `json:"ssh_host,omitempty"`
 	SSH             SSH        `json:"ssh"`
 	WGAddress       string     `json:"wg_address"`
 	WGPort          int        `json:"wg_port,omitempty"`
@@ -81,6 +82,15 @@ type Node struct {
 	ProxyConfigPath string     `json:"proxy_config_path,omitempty"`
 	ProxyService    string     `json:"proxy_service,omitempty"`
 	Deploy          NodeDeploy `json:"deploy,omitempty"`
+}
+
+// SSHAddr returns the address to use for SSH connections.
+// If SSHHost is set (e.g. a stable domain), it is used; otherwise falls back to Host.
+func (n Node) SSHAddr() string {
+	if n.SSHHost != "" {
+		return n.SSHHost
+	}
+	return n.Host
 }
 
 type SSH struct {
@@ -107,7 +117,10 @@ type PanelGuide struct {
 }
 
 type HealthCheck struct {
-	TestURL          string `json:"test_url"`
+	TestURL string `json:"test_url"`
+	// ExitCheckURL must point to an endpoint that returns a plain-text public IPv4
+	// address (e.g. https://api.ipify.org). It is used to detect the exit node's
+	// outbound IP via the SOCKS proxy. It is NOT a generic health-check URL.
 	ExitCheckURL     string `json:"exit_check_url,omitempty"`
 	PublicIPCheckURL string `json:"public_ip_check_url,omitempty"`
 	ExitLocation     string `json:"exit_location,omitempty"`
