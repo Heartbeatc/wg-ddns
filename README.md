@@ -359,9 +359,11 @@ wgstack
 
 修复失败不会影响当前正在运行的 WireGuard 和 sing-box 服务。你可以通过 `journalctl -u wgstack-reconcile` 查看修复日志。`wgstack health --live` 也会检测自动修复定时器的状态和最近一次执行结果。
 
-**重试逻辑**：只有当所有目标域名的 DNS 更新全部成功时，新 IP 才会写入状态文件。如果有任何一个域名更新失败，状态文件不会更新——下次定时触发时会自动重试。
+**重试逻辑**：只有当所有目标域名的 DNS 更新全部成功，并且入口 IP 变化时出口侧 WireGuard 刷新也成功完成，新 IP 才会写入状态文件。如果有任何一个域名更新失败，或者出口节点仍未解析到新的 WG Endpoint 而无法安全重启，状态文件不会更新——下次定时触发时会自动重试。
 
 **DNS 漂移修复**：即使入口 IP 没有变化，脚本每次运行时也会检查 Cloudflare 上每条 A 记录的 content、TTL 和 proxied 是否与配置一致。如果某条记录被手动改错、被删除、或 TTL/proxied 偏离期望，脚本会自动修复。这意味着 Cloudflare 上的入口业务域名会被持续校准到期望状态。
+
+**出口 WG 刷新时序**：当入口 IP 变化时，脚本不会在更新 Cloudflare 后立刻重启出口 WireGuard，而是会先等待出口节点自己的 DNS 解析结果看到新的 WG Endpoint IP，再执行 `systemctl restart wg-quick@wg0`。这样可以避免“DNS 刚更新但出口本地缓存还是旧 IP”导致的空重启。
 
 **触发通知区分原因**：Telegram 通知会明确标注触发原因是「IP 变化」还是「DNS 漂移」（或两者同时），便于运维定位问题。出口 WireGuard 只在 IP 变化时重启，DNS 漂移修复不会触发 WG 重启。
 

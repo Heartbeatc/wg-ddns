@@ -19,7 +19,10 @@ func TestReconcileScriptHasDNSDriftDetection(t *testing.T) {
 		{"checks record proxied", `REC_PROXIED`},
 		{"exits when no change and no drift", `"$IP_CHANGED" = "false" ] && [ "$DNS_DRIFT" = "false" ]`},
 		{"only restarts WG on IP change", `"$IP_CHANGED" = "true" ] && [ -n "$EXIT_SSH_HOST"`},
-		{"saves state only when all succeed", `"$FAILED" ] && [ -n "$UPDATED"`},
+		{"saves state only when state is safe to persist", `if [ "$CAN_SAVE_STATE" = "true" ] && [ -n "$UPDATED" ]; then`},
+		{"waits for exit DNS before restart", `Waiting for exit node DNS to resolve $WG_ENDPOINT_DOMAIN -> $CURRENT_IP`},
+		{"checks exit resolver via getent", `getent ahostsv4 '$WG_ENDPOINT_DOMAIN'`},
+		{"requires wg refresh success before save", `"$IP_CHANGED" = "true" ] && [ "$WG_STATUS" != "success" ]`},
 		{"tracks drifted domains", `DRIFTED=`},
 		{"logs trigger reason", `TRIGGER=`},
 		{"marks missing record", `missing`},
@@ -63,6 +66,9 @@ func TestReconcileScriptWGOnlyOnIPChange(t *testing.T) {
 	if !strings.Contains(reconcileScript, `"$IP_CHANGED" = "true" ] && [ -n "$EXIT_SSH_HOST"`) {
 		t.Error("WG restart must be conditional on IP_CHANGED=true")
 	}
+	if !strings.Contains(reconcileScript, `"$WG_STATUS" != "success"`) {
+		t.Error("state saving should depend on successful WG refresh when IP changes")
+	}
 }
 
 func TestReconcileEnvConfig(t *testing.T) {
@@ -101,19 +107,20 @@ func TestReconcileEnvConfig(t *testing.T) {
 	env := reconcileEnvConfig(project, "cf-token-value", "tg-token-value")
 
 	checks := map[string]string{
-		"CF_API_TOKEN":    "cf-token-value",
-		"CF_ZONE":         "example.com",
-		"DOMAINS":         "entry.example.com wg.example.com",
-		"RECORD_TTL":      "120",
-		"CF_PROXIED":      "false",
-		"EXIT_SSH_HOST":   "ssh-exit.example.com",
-		"EXIT_SSH_PORT":   "22",
-		"EXIT_SSH_USER":   "root",
-		"EXIT_WG_SERVICE": "wg-quick@wg0",
-		"TG_ENABLED":      "true",
-		"TG_BOT_TOKEN":    "tg-token-value",
-		"TG_CHAT_ID":      "-123",
-		"PROJECT_NAME":    "test-project",
+		"CF_API_TOKEN":       "cf-token-value",
+		"CF_ZONE":            "example.com",
+		"DOMAINS":            "entry.example.com wg.example.com",
+		"RECORD_TTL":         "120",
+		"CF_PROXIED":         "false",
+		"EXIT_SSH_HOST":      "ssh-exit.example.com",
+		"EXIT_SSH_PORT":      "22",
+		"EXIT_SSH_USER":      "root",
+		"EXIT_WG_SERVICE":    "wg-quick@wg0",
+		"WG_ENDPOINT_DOMAIN": "wg.example.com",
+		"TG_ENABLED":         "true",
+		"TG_BOT_TOKEN":       "tg-token-value",
+		"TG_CHAT_ID":         "-123",
+		"PROJECT_NAME":       "test-project",
 	}
 
 	for key, want := range checks {

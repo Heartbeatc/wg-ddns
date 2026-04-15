@@ -177,36 +177,68 @@ done
 # --- Step 6: Restart exit WireGuard (only on IP change) ---
 WG_STATUS="skipped"
 if [ "$IP_CHANGED" = "true" ] && [ -n "$EXIT_SSH_HOST" ] && [ -f "$EXIT_SSH_KEY" ]; then
-  echo "Restarting exit WireGuard via $EXIT_SSH_USER@$EXIT_SSH_HOST"
-  if ssh -i "$EXIT_SSH_KEY" \
-    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=15 -o BatchMode=yes \
-    -p "$EXIT_SSH_PORT" \
-    "${EXIT_SSH_USER}@${EXIT_SSH_HOST}" \
-    "systemctl restart $EXIT_WG_SERVICE" 2>&1; then
-    WG_STATUS="success"
-    echo "Exit WireGuard restarted"
+  DNS_READY=false
+  ATTEMPT=1
+  echo "Waiting for exit node DNS to resolve $WG_ENDPOINT_DOMAIN -> $CURRENT_IP"
+  while [ "$ATTEMPT" -le 12 ]; do
+    RESOLVED_ON_EXIT=$(ssh -i "$EXIT_SSH_KEY" \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=15 -o BatchMode=yes \
+      -p "$EXIT_SSH_PORT" \
+      "${EXIT_SSH_USER}@${EXIT_SSH_HOST}" \
+      "getent ahostsv4 '$WG_ENDPOINT_DOMAIN' 2>/dev/null | awk 'NR==1 {print \\$1; exit}'" 2>/dev/null || true)
+
+    if [ "$RESOLVED_ON_EXIT" = "$CURRENT_IP" ]; then
+      DNS_READY=true
+      echo "Exit node now resolves $WG_ENDPOINT_DOMAIN -> $CURRENT_IP"
+      break
+    fi
+
+    echo "  Exit resolver sees ${RESOLVED_ON_EXIT:-<none>} for $WG_ENDPOINT_DOMAIN (attempt $ATTEMPT/12)"
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 5
+  done
+
+  if [ "$DNS_READY" = "true" ]; then
+    echo "Restarting exit WireGuard via $EXIT_SSH_USER@$EXIT_SSH_HOST"
+    if ssh -i "$EXIT_SSH_KEY" \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=15 -o BatchMode=yes \
+      -p "$EXIT_SSH_PORT" \
+      "${EXIT_SSH_USER}@${EXIT_SSH_HOST}" \
+      "systemctl restart $EXIT_WG_SERVICE" 2>&1; then
+      WG_STATUS="success"
+      echo "Exit WireGuard restarted"
+    else
+      WG_STATUS="failed"
+      echo "WARN: failed to restart exit WireGuard"
+    fi
   else
-    WG_STATUS="failed"
-    echo "WARN: failed to restart exit WireGuard"
+    WG_STATUS="dns-not-ready"
+    echo "WARN: exit node did not resolve $WG_ENDPOINT_DOMAIN to $CURRENT_IP in time"
   fi
 fi
 
 # --- Step 7: Persist state ---
-# Only save when ALL DNS domains are confirmed fixed.
-if [ -z "$FAILED" ] && [ -n "$UPDATED" ]; then
+CAN_SAVE_STATE=true
+if [ -n "$FAILED" ]; then
+  CAN_SAVE_STATE=false
+fi
+if [ "$IP_CHANGED" = "true" ] && [ "$WG_STATUS" != "success" ]; then
+  CAN_SAVE_STATE=false
+fi
+
+if [ "$CAN_SAVE_STATE" = "true" ] && [ -n "$UPDATED" ]; then
   echo "$CURRENT_IP" > "$STATE_FILE"
   echo "State saved: $CURRENT_IP"
 else
-  if [ -n "$FAILED" ]; then
-    echo "State NOT saved — failed domains will be retried on next run"
-  fi
+  echo "State NOT saved — remaining work will be retried on next run"
 fi
 
 # --- Step 8: Telegram notification ---
 if [ "$TG_ENABLED" = "true" ] && [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
   SAVED="yes"
-  [ -n "$FAILED" ] && SAVED="no (will retry)"
+  [ "$CAN_SAVE_STATE" != "true" ] && SAVED="no (will retry)"
   MSG="[$PROJECT_NAME] 入口自动修复
 
 触发原因: $TRIGGER"
@@ -238,6 +270,10 @@ fi
 
 if [ -n "$FAILED" ]; then
   echo "ERROR: some DNS updates failed:$FAILED"
+  exit 1
+fi
+if [ "$IP_CHANGED" = "true" ] && [ "$WG_STATUS" != "success" ]; then
+  echo "ERROR: exit WireGuard refresh did not complete successfully ($WG_STATUS)"
   exit 1
 fi
 
@@ -295,6 +331,7 @@ EXIT_SSH_PORT=%d
 EXIT_SSH_USER=%s
 EXIT_SSH_KEY=/etc/wgstack/exit_key
 EXIT_WG_SERVICE=%s
+WG_ENDPOINT_DOMAIN=%s
 
 TG_ENABLED=%s
 TG_BOT_TOKEN=%s
@@ -303,7 +340,7 @@ PROJECT_NAME=%s
 `, cfToken, project.Cloudflare.Zone, strings.Join(domains, " "),
 		project.Cloudflare.TTL, proxied,
 		project.Nodes.HK.SSHAddr(), exitPort, project.Nodes.HK.SSH.User,
-		project.Nodes.HK.WGService,
+		project.Nodes.HK.WGService, project.Domains.WireGuard,
 		tgEnabled, tgToken, tgChatID, project.Project)
 }
 
