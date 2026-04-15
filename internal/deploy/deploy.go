@@ -28,25 +28,25 @@ func BuildFiles(project model.Project) ([]RemoteFile, error) {
 	var files []RemoteFile
 	for _, file := range rendered {
 		switch file.Path {
-		case "out/us/wg0.conf":
+		case "out/entry/wg0.conf":
 			files = append(files, RemoteFile{
-				Node:       "us",
+				Node:       "entry",
 				Path:       project.Nodes.US.WGConfigPath,
 				Mode:       "0600",
 				LocalLabel: file.Path,
 				Content:    file.Content,
 			})
-		case "out/hk/wg0.conf":
+		case "out/exit/wg0.conf":
 			files = append(files, RemoteFile{
-				Node:       "hk",
+				Node:       "exit",
 				Path:       project.Nodes.HK.WGConfigPath,
 				Mode:       "0600",
 				LocalLabel: file.Path,
 				Content:    file.Content,
 			})
-		case "out/hk/sing-box.json":
+		case "out/exit/sing-box.json":
 			files = append(files, RemoteFile{
-				Node:       "hk",
+				Node:       "exit",
 				Path:       project.Nodes.HK.ProxyConfigPath,
 				Mode:       "0644",
 				LocalLabel: file.Path,
@@ -59,12 +59,14 @@ func BuildFiles(project model.Project) ([]RemoteFile, error) {
 }
 
 type nodeEntry struct {
-	key  string
-	node model.Node
+	key     string
+	label   string
+	node    model.Node
+	isLocal bool
 }
 
-func Apply(project model.Project, stdout io.Writer, activate bool) error {
-	if err := config.ValidateDeploy(project); err != nil {
+func Apply(project model.Project, stdout io.Writer, activate bool, rc model.RunContext) error {
+	if err := config.ValidateDeploy(project, rc); err != nil {
 		return err
 	}
 
@@ -73,39 +75,40 @@ func Apply(project model.Project, stdout io.Writer, activate bool) error {
 		return err
 	}
 
-	// Deterministic order: US first (entry), then HK (exit).
 	entries := []nodeEntry{
-		{"us", project.Nodes.US},
-		{"hk", project.Nodes.HK},
+		{key: "entry", label: "入口节点", node: project.Nodes.US, isLocal: rc.EntryIsLocal},
+		{key: "exit", label: "出口节点", node: project.Nodes.HK, isLocal: rc.ExitIsLocal},
 	}
 
 	for _, entry := range entries {
-		key := entry.key
-		node := entry.node
+		if entry.isLocal {
+			fmt.Fprintf(stdout, "本机部署 %s\n", entry.label)
+		} else {
+			fmt.Fprintf(stdout, "连接 %s (%s)\n", entry.label, entry.node.Host)
+		}
 
-		fmt.Fprintf(stdout, "Connecting to %s (%s)\n", key, node.Host)
-		client, err := sshclient.Dial(node)
+		client, err := sshclient.DialOrLocal(entry.node, entry.isLocal)
 		if err != nil {
-			return fmt.Errorf("无法连接 %s (%s): %w", key, node.Host, err)
+			return fmt.Errorf("无法连接 %s (%s): %w", entry.label, entry.node.Host, err)
 		}
 
-		if err := prepareNode(stdout, client, key, node); err != nil {
+		if err := prepareNode(stdout, client, entry.key, entry.node); err != nil {
 			client.Close()
 			return err
 		}
 
-		if err := uploadNodeFiles(stdout, client, key, files); err != nil {
+		if err := uploadNodeFiles(stdout, client, entry.key, files); err != nil {
 			client.Close()
 			return err
 		}
 
-		if err := validateNode(stdout, client, key, node); err != nil {
+		if err := validateNode(stdout, client, entry.key, entry.node); err != nil {
 			client.Close()
 			return err
 		}
 
-		if activate && !node.Deploy.UploadOnly {
-			if err := activateNode(stdout, client, key, node); err != nil {
+		if activate && !entry.node.Deploy.UploadOnly {
+			if err := activateNode(stdout, client, entry.key, entry.node); err != nil {
 				client.Close()
 				return err
 			}
@@ -119,8 +122,8 @@ func Apply(project model.Project, stdout io.Writer, activate bool) error {
 	return nil
 }
 
-func prepareNode(stdout io.Writer, client *sshclient.Client, nodeKey string, node model.Node) error {
-	fmt.Fprintln(stdout, "  Running remote preflight")
+func prepareNode(stdout io.Writer, client sshclient.Runner, nodeKey string, node model.Node) error {
+	fmt.Fprintln(stdout, "  检查远程环境")
 	if err := requireRoot(client); err != nil {
 		return err
 	}
@@ -131,7 +134,7 @@ func prepareNode(stdout io.Writer, client *sshclient.Client, nodeKey string, nod
 		if err := ensureWireGuard(stdout, client); err != nil {
 			return err
 		}
-		if nodeKey == "hk" && strings.EqualFold(node.Proxy, "sing-box") {
+		if nodeKey == "exit" && strings.EqualFold(node.Proxy, "sing-box") {
 			if err := ensureSingBox(stdout, client); err != nil {
 				return err
 			}
@@ -140,12 +143,12 @@ func prepareNode(stdout io.Writer, client *sshclient.Client, nodeKey string, nod
 	return nil
 }
 
-func uploadNodeFiles(stdout io.Writer, client *sshclient.Client, nodeKey string, files []RemoteFile) error {
+func uploadNodeFiles(stdout io.Writer, client sshclient.Runner, nodeKey string, files []RemoteFile) error {
 	for _, file := range files {
 		if file.Node != nodeKey {
 			continue
 		}
-		fmt.Fprintf(stdout, "  Uploading %s -> %s\n", file.LocalLabel, file.Path)
+		fmt.Fprintf(stdout, "  上传 %s -> %s\n", file.LocalLabel, file.Path)
 		if err := client.Upload(file.Path, []byte(file.Content), file.Mode); err != nil {
 			return err
 		}
@@ -153,27 +156,27 @@ func uploadNodeFiles(stdout io.Writer, client *sshclient.Client, nodeKey string,
 	return nil
 }
 
-func validateNode(stdout io.Writer, client *sshclient.Client, nodeKey string, node model.Node) error {
-	if nodeKey == "hk" && strings.EqualFold(node.Proxy, "sing-box") {
-		fmt.Fprintf(stdout, "  Validating sing-box config %s\n", node.ProxyConfigPath)
+func validateNode(stdout io.Writer, client sshclient.Runner, nodeKey string, node model.Node) error {
+	if nodeKey == "exit" && strings.EqualFold(node.Proxy, "sing-box") {
+		fmt.Fprintf(stdout, "  验证 sing-box 配置 %s\n", node.ProxyConfigPath)
 		out, err := client.RunShell(fmt.Sprintf("sing-box check -c %s", quoteArg(node.ProxyConfigPath)))
 		if err != nil {
 			msg := strings.TrimSpace(out)
 			if msg != "" {
-				return fmt.Errorf("sing-box check failed: %w: %s", err, msg)
+				return fmt.Errorf("sing-box 配置验证失败: %w: %s", err, msg)
 			}
-			return fmt.Errorf("sing-box check failed: %w", err)
+			return fmt.Errorf("sing-box 配置验证失败: %w", err)
 		}
 	}
 	return nil
 }
 
-func activateNode(stdout io.Writer, client *sshclient.Client, nodeKey string, node model.Node) error {
+func activateNode(stdout io.Writer, client sshclient.Runner, nodeKey string, node model.Node) error {
 	commands := []string{
 		fmt.Sprintf("systemctl enable --now %s", node.WGService),
 		fmt.Sprintf("systemctl restart %s", node.WGService),
 	}
-	if nodeKey == "hk" && node.ProxyService != "" {
+	if nodeKey == "exit" && node.ProxyService != "" {
 		commands = append(commands,
 			fmt.Sprintf("systemctl enable --now %s", node.ProxyService),
 			fmt.Sprintf("systemctl restart %s", node.ProxyService),
@@ -181,43 +184,43 @@ func activateNode(stdout io.Writer, client *sshclient.Client, nodeKey string, no
 	}
 
 	for _, command := range commands {
-		fmt.Fprintf(stdout, "  Running %s\n", command)
+		fmt.Fprintf(stdout, "  执行 %s\n", command)
 		out, err := client.RunShell(command)
 		if err != nil {
 			msg := strings.TrimSpace(out)
 			if msg != "" {
-				return fmt.Errorf("%s failed: %w: %s", command, err, msg)
+				return fmt.Errorf("%s 失败: %w: %s", command, err, msg)
 			}
-			return fmt.Errorf("%s failed: %w", command, err)
+			return fmt.Errorf("%s 失败: %w", command, err)
 		}
 	}
 	return nil
 }
 
-func requireRoot(client *sshclient.Client) error {
+func requireRoot(client sshclient.Runner) error {
 	out, err := client.RunShell("id -u")
 	if err != nil {
-		return fmt.Errorf("remote preflight: cannot determine uid: %w: %s", err, strings.TrimSpace(out))
+		return fmt.Errorf("环境检查: 无法获取 uid: %w: %s", err, strings.TrimSpace(out))
 	}
 	if strings.TrimSpace(out) != "0" {
-		return fmt.Errorf("remote preflight: expected root login, got uid=%s", strings.TrimSpace(out))
+		return fmt.Errorf("环境检查: 需要 root 权限，当前 uid=%s", strings.TrimSpace(out))
 	}
 	return nil
 }
 
-func requireSystemd(client *sshclient.Client) error {
+func requireSystemd(client sshclient.Runner) error {
 	out, err := client.RunShell("command -v systemctl >/dev/null 2>&1 && echo ok")
 	if err != nil {
-		return fmt.Errorf("remote preflight: systemctl not available: %w: %s", err, strings.TrimSpace(out))
+		return fmt.Errorf("环境检查: systemctl 不可用: %w: %s", err, strings.TrimSpace(out))
 	}
 	if strings.TrimSpace(out) != "ok" {
-		return fmt.Errorf("remote preflight: systemctl not available")
+		return fmt.Errorf("环境检查: systemctl 不可用")
 	}
 	return nil
 }
 
-func ensureWireGuard(stdout io.Writer, client *sshclient.Client) error {
-	fmt.Fprintln(stdout, "  Ensuring WireGuard tools are installed")
+func ensureWireGuard(stdout io.Writer, client sshclient.Runner) error {
+	fmt.Fprintln(stdout, "  确认 WireGuard 已安装")
 	script := `
 if command -v wg >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
   exit 0
@@ -242,13 +245,13 @@ command -v curl >/dev/null 2>&1
 `
 	out, err := client.RunShell(script)
 	if err != nil {
-		return fmt.Errorf("ensure wireguard tools: %w: %s", err, strings.TrimSpace(out))
+		return fmt.Errorf("安装 WireGuard 失败: %w: %s", err, strings.TrimSpace(out))
 	}
 	return nil
 }
 
-func ensureSingBox(stdout io.Writer, client *sshclient.Client) error {
-	fmt.Fprintln(stdout, "  Ensuring sing-box is installed")
+func ensureSingBox(stdout io.Writer, client sshclient.Runner) error {
+	fmt.Fprintln(stdout, "  确认 sing-box 已安装")
 	script := `
 if command -v sing-box >/dev/null 2>&1; then
   exit 0
@@ -262,7 +265,7 @@ command -v sing-box >/dev/null 2>&1
 `
 	out, err := client.RunShell(script)
 	if err != nil {
-		return fmt.Errorf("ensure sing-box: %w: %s", err, strings.TrimSpace(out))
+		return fmt.Errorf("安装 sing-box 失败: %w: %s", err, strings.TrimSpace(out))
 	}
 	return nil
 }

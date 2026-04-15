@@ -29,9 +29,9 @@ func TestBuildFiles(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"us:/etc/wireguard/wg0.conf":   "0600",
-		"hk:/etc/wireguard/wg0.conf":   "0600",
-		"hk:/etc/sing-box/config.json": "0644",
+		"entry:/etc/wireguard/wg0.conf":  "0600",
+		"exit:/etc/wireguard/wg0.conf":   "0600",
+		"exit:/etc/sing-box/config.json": "0644",
 	}
 
 	for _, file := range files {

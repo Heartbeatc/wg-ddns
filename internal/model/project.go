@@ -1,5 +1,13 @@
 package model
 
+// RunContext carries runtime-only state about where wgstack is executing.
+// This is NEVER persisted to config — it is determined at invocation time
+// via the wizard or CLI flags (--local-entry / --local-exit).
+type RunContext struct {
+	EntryIsLocal bool
+	ExitIsLocal  bool
+}
+
 type Project struct {
 	Project    string      `json:"project"`
 	Cloudflare Cloudflare  `json:"cloudflare"`
@@ -22,6 +30,20 @@ type Domains struct {
 	Entry     string `json:"entry"`
 	Panel     string `json:"panel"`
 	WireGuard string `json:"wireguard"`
+}
+
+// Unique returns all configured domain names, deduplicated.
+// When WireGuard domain reuses the entry domain, duplicates are removed.
+func (d Domains) Unique() []string {
+	seen := make(map[string]bool, 3)
+	var result []string
+	for _, name := range []string{d.Entry, d.Panel, d.WireGuard} {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 type Nodes struct {
@@ -73,5 +95,5 @@ type HealthCheck struct {
 	TestURL          string `json:"test_url"`
 	ExitCheckURL     string `json:"exit_check_url,omitempty"`
 	PublicIPCheckURL string `json:"public_ip_check_url,omitempty"`
-	ExitLocation     string `json:"exit_location"`
+	ExitLocation     string `json:"exit_location,omitempty"`
 }

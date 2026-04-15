@@ -16,7 +16,7 @@ const DefaultPath = "wgstack.json"
 
 func DefaultProject() model.Project {
 	return model.Project{
-		Project: "us-entry-hk-exit",
+		Project: "entry-exit-link",
 		Cloudflare: model.Cloudflare{
 			Zone:       "example.com",
 			Token:      "",
@@ -26,9 +26,9 @@ func DefaultProject() model.Project {
 			Proxied:    false,
 		},
 		Domains: model.Domains{
-			Entry:     "us.example.com",
+			Entry:     "entry.example.com",
 			Panel:     "panel.example.com",
-			WireGuard: "wg.example.com",
+			WireGuard: "entry.example.com",
 		},
 		Nodes: model.Nodes{
 			US: model.Node{
@@ -72,14 +72,14 @@ func DefaultProject() model.Project {
 			},
 		},
 		PanelGuide: model.PanelGuide{
-			OutboundTag: "hk-socks",
-			RouteUser:   "hk-test@local",
+			OutboundTag: "exit-socks",
+			RouteUser:   "exit-user@local",
 		},
 		Checks: model.HealthCheck{
 			TestURL:          "https://ifconfig.me",
 			ExitCheckURL:     "https://ifconfig.me/country_code",
 			PublicIPCheckURL: "https://ifconfig.me/ip",
-			ExitLocation:     "HK",
+			ExitLocation:     "",
 		},
 	}
 }
@@ -216,14 +216,17 @@ func Validate(project model.Project) error {
 	return nil
 }
 
-func ValidateDeploy(project model.Project) error {
+// ValidateDeploy checks that the project has all fields needed for actual
+// deployment. rc carries runtime-only state about which nodes are local;
+// SSH authentication is only required for non-local nodes.
+func ValidateDeploy(project model.Project, rc model.RunContext) error {
 	var problems []string
 
-	if project.Nodes.US.SSH.Port <= 0 {
-		problems = append(problems, "nodes.us.ssh.port")
+	if !rc.EntryIsLocal && project.Nodes.US.SSH.Port <= 0 {
+		problems = append(problems, "入口节点 SSH 端口 (nodes.us.ssh.port)")
 	}
-	if project.Nodes.HK.SSH.Port <= 0 {
-		problems = append(problems, "nodes.hk.ssh.port")
+	if !rc.ExitIsLocal && project.Nodes.HK.SSH.Port <= 0 {
+		problems = append(problems, "出口节点 SSH 端口 (nodes.hk.ssh.port)")
 	}
 
 	checkAuth := func(prefix string, ssh model.SSH) {
@@ -237,12 +240,16 @@ func ValidateDeploy(project model.Project) error {
 				problems = append(problems, prefix+".private_key_path")
 			}
 		default:
-			problems = append(problems, prefix+".auth_method")
+			problems = append(problems, prefix+".auth_method 未配置")
 		}
 	}
 
-	checkAuth("nodes.us.ssh", project.Nodes.US.SSH)
-	checkAuth("nodes.hk.ssh", project.Nodes.HK.SSH)
+	if !rc.EntryIsLocal {
+		checkAuth("nodes.us.ssh", project.Nodes.US.SSH)
+	}
+	if !rc.ExitIsLocal {
+		checkAuth("nodes.hk.ssh", project.Nodes.HK.SSH)
+	}
 
 	checkWGKey := func(label, key string) {
 		if strings.TrimSpace(key) == "" {
@@ -259,10 +266,10 @@ func ValidateDeploy(project model.Project) error {
 		}
 	}
 
-	checkWGKey("美国 WG 私钥 (nodes.us.wg_private_key)", project.Nodes.US.WGPrivateKey)
-	checkWGKey("美国 WG 公钥 (nodes.us.wg_public_key)", project.Nodes.US.WGPublicKey)
-	checkWGKey("香港 WG 私钥 (nodes.hk.wg_private_key)", project.Nodes.HK.WGPrivateKey)
-	checkWGKey("香港 WG 公钥 (nodes.hk.wg_public_key)", project.Nodes.HK.WGPublicKey)
+	checkWGKey("入口 WG 私钥 (nodes.us.wg_private_key)", project.Nodes.US.WGPrivateKey)
+	checkWGKey("入口 WG 公钥 (nodes.us.wg_public_key)", project.Nodes.US.WGPublicKey)
+	checkWGKey("出口 WG 私钥 (nodes.hk.wg_private_key)", project.Nodes.HK.WGPrivateKey)
+	checkWGKey("出口 WG 公钥 (nodes.hk.wg_public_key)", project.Nodes.HK.WGPublicKey)
 
 	if len(problems) > 0 {
 		return fmt.Errorf("部署配置不完整: %s", strings.Join(problems, ", "))

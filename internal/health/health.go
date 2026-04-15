@@ -14,22 +14,27 @@ type Check struct {
 }
 
 func Expected(project model.Project) []Check {
+	exitDetail := fmt.Sprintf("通过出口 SOCKS 访问 %s 应显示 %s", project.Checks.TestURL, project.Checks.ExitLocation)
+	if project.Checks.ExitLocation == "" {
+		exitDetail = fmt.Sprintf("通过出口 SOCKS 访问 %s（不做地区校验）", project.Checks.TestURL)
+	}
+
 	return []Check{
 		{
 			Name:   "DNS",
-			Detail: fmt.Sprintf("%s, %s, and %s should resolve to the current US public IP", project.Domains.Entry, project.Domains.Panel, project.Domains.WireGuard),
+			Detail: fmt.Sprintf("%s 应解析到入口节点公网 IP", strings.Join(project.Domains.Unique(), "、")),
 		},
 		{
 			Name:   "WireGuard",
-			Detail: fmt.Sprintf("US %s and HK %s should have a recent handshake", address.CIDRIP(project.Nodes.US.WGAddress), address.CIDRIP(project.Nodes.HK.WGAddress)),
+			Detail: fmt.Sprintf("入口 %s 和出口 %s 应有最近的握手记录", address.CIDRIP(project.Nodes.US.WGAddress), address.CIDRIP(project.Nodes.HK.WGAddress)),
 		},
 		{
-			Name:   "HK SOCKS",
-			Detail: fmt.Sprintf("HK host should listen on %s", project.Nodes.HK.SocksListen),
+			Name:   "出口 SOCKS",
+			Detail: fmt.Sprintf("出口节点应监听 %s", project.Nodes.HK.SocksListen),
 		},
 		{
-			Name:   "Egress",
-			Detail: fmt.Sprintf("US host curl via HK SOCKS to %s should exit from %s", project.Checks.TestURL, project.Checks.ExitLocation),
+			Name:   "出口验证",
+			Detail: exitDetail,
 		},
 	}
 }

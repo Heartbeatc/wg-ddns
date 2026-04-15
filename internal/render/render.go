@@ -29,9 +29,9 @@ func Generate(project model.Project) ([]File, error) {
 		template string
 		path     string
 	}{
-		{template: "templates/us-wg0.conf.tmpl", path: "out/us/wg0.conf"},
-		{template: "templates/hk-wg0.conf.tmpl", path: "out/hk/wg0.conf"},
-		{template: "templates/hk-sing-box.json.tmpl", path: "out/hk/sing-box.json"},
+		{template: "templates/entry-wg0.conf.tmpl", path: "out/entry/wg0.conf"},
+		{template: "templates/exit-wg0.conf.tmpl", path: "out/exit/wg0.conf"},
+		{template: "templates/exit-sing-box.json.tmpl", path: "out/exit/sing-box.json"},
 	}
 
 	var rendered []File
@@ -61,10 +61,10 @@ func WriteAll(root string, files []File) error {
 
 func checkRequiredKeys(p model.Project) error {
 	for _, kv := range []struct{ label, key string }{
-		{"美国节点 WireGuard 私钥", p.Nodes.US.WGPrivateKey},
-		{"美国节点 WireGuard 公钥", p.Nodes.US.WGPublicKey},
-		{"香港节点 WireGuard 私钥", p.Nodes.HK.WGPrivateKey},
-		{"香港节点 WireGuard 公钥", p.Nodes.HK.WGPublicKey},
+		{"入口节点 WireGuard 私钥", p.Nodes.US.WGPrivateKey},
+		{"入口节点 WireGuard 公钥", p.Nodes.US.WGPublicKey},
+		{"出口节点 WireGuard 私钥", p.Nodes.HK.WGPrivateKey},
+		{"出口节点 WireGuard 公钥", p.Nodes.HK.WGPublicKey},
 	} {
 		if kv.key == "" {
 			return fmt.Errorf("渲染配置失败: %s 为空，请运行 wgstack setup 生成密钥", kv.label)

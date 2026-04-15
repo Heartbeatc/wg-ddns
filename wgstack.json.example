@@ -1,5 +1,5 @@
 {
-  "project": "us-entry-hk-exit",
+  "project": "entry-exit-link",
   "cloudflare": {
     "zone": "example.com",
     "token": "",
@@ -9,9 +9,9 @@
     "proxied": false
   },
   "domains": {
-    "entry": "us.example.com",
+    "entry": "entry.example.com",
     "panel": "panel.example.com",
-    "wireguard": "wg.example.com"
+    "wireguard": "entry.example.com"
   },
   "nodes": {
     "us": {
@@ -59,13 +59,13 @@
     }
   },
   "panel_guide": {
-    "outbound_tag": "hk-socks",
-    "route_user": "hk-test@local"
+    "outbound_tag": "exit-socks",
+    "route_user": "exit-user@local"
   },
   "healthcheck": {
     "test_url": "https://ifconfig.me",
     "exit_check_url": "https://ifconfig.me/country_code",
     "public_ip_check_url": "https://ifconfig.me/ip",
-    "exit_location": "HK"
+    "exit_location": ""
   }
 }

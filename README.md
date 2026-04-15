@@ -1,46 +1,62 @@
 # wgstack
 
-帮你自动搭建「美国入口 + 香港出口」的代理底层链路。
+帮你搭建「入口节点 + 出口节点」的代理底层链路。
 
 ## 这是什么
 
-wgstack 是一个部署工具，帮你把两台 VPS 连起来：
+wgstack 是一个部署工具，帮你把两台服务器连成一条代理链路：
 
-- **美国 VPS** 作为入口机（用户连接到这里）
-- **香港 VPS** 作为出口机（流量从这里出去）
+- **入口节点** — 接收客户端连接的服务器
+- **出口节点** — 流量最终从此出去的服务器
 - 两台机器之间用 **WireGuard** 建加密隧道
-- 香港机用 **sing-box** 提供 SOCKS 代理
+- 出口节点用 **sing-box** 提供 SOCKS 代理
 - **Cloudflare** 管理域名解析
 
-你只需要提供两台 VPS 的 SSH 信息和 Cloudflare Token，工具会帮你完成底层的所有配置。
+你只需要提供服务器的 SSH 信息和 Cloudflare Token，工具会帮你完成底层的所有配置。
 
 面板（3x-ui / x-panel）的设置仍然需要手动完成，但工具会一步步告诉你怎么做。
 
+典型场景举例：美国 VPS 做入口 + 香港 VPS 做出口，但本工具不限于特定地区组合。
+
 ## 适合什么场景
 
-- 你有一台美国 VPS 作为代理入口
-- 你有一台香港 VPS（可以是家宽出口）
-- 美国 VPS 的 IP 可能变化，需要自动同步域名
+- 你有两台服务器，一台做入口，一台做出口
+- 入口节点的 IP 可能变化，需要自动同步域名
 - 你用 Cloudflare 管理域名
 - 你用 3x-ui 或 x-panel 做面板
 - 你想让底层搭建过程自动化
 
 ## 需要准备什么
 
-在开始之前，请准备好：
-
 | 项目 | 说明 |
 |------|------|
-| 美国 VPS | 需要 root 权限，知道 IP 地址和 SSH 登录方式 |
-| 香港 VPS | 需要 root 权限，知道 IP 地址和 SSH 登录方式 |
+| 入口节点 | 需要 root 权限，知道 IP 地址和 SSH 登录方式 |
+| 出口节点 | 需要 root 权限，知道 IP 地址和 SSH 登录方式 |
 | Cloudflare API Token | 在 Cloudflare 控制台创建，需要 Zone DNS 编辑权限 |
-| 三个子域名 | 入口域名、面板域名、WireGuard 域名（如 us.example.com） |
+| 域名 | 至少需要面板域名和入口域名 |
 
-SSH 支持两种登录方式：**密码** 或 **私钥文件**（如 `id_rsa.pem`）。向导里会让你选择。
+SSH 支持两种登录方式：**密码** 或 **私钥文件**（如 `id_rsa.pem`）。
+
+## 在哪台机器上运行
+
+wgstack 是一个「管理端」工具，可以运行在：
+
+- **本地电脑** — 通过 SSH 远程配置两台节点
+- **入口节点本机** — 只需要出口节点的 SSH 信息
+- **出口节点本机** — 只需要入口节点的 SSH 信息
+
+只要运行 wgstack 的机器能通过 SSH 访问目标节点，就可以完成部署。如果你就在某台目标节点上运行，程序会跳过该节点的 SSH 配置，直接在本机部署，并自动检测本机公网 IP。
+
+**重要：运行位置不会保存到配置文件中。** 同一份配置可以在不同机器上使用。如果你把配置带到另一台机器上运行，需要通过 CLI 参数指定运行位置：
+
+```bash
+wgstack apply --local-entry    # 在入口节点本机运行
+wgstack apply --local-exit     # 在出口节点本机运行
+```
+
+`health --live` 和 `reconcile` 同样支持 `--local-entry` / `--local-exit` 参数。
 
 ## 一键安装
-
-在你的管理机器上运行（也可以是美国 VPS 本身）：
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/Heartbeatc/wg-ddns/main/scripts/install.sh)
@@ -58,47 +74,43 @@ wgstack
 
 工具会自动进入部署向导，一步一步引导你完成配置和部署。
 
-### 向导会问你什么
+### 向导流程
 
-1. 美国 VPS 的 IP 和 SSH 登录信息（用户名、密码或私钥路径）
-2. 香港 VPS 的 IP 和 SSH 登录信息
-3. Cloudflare 的主域名和 API Token
-4. 三个子域名（会自动建议默认值，你也可以直接回车确认）
-5. 面板中要用的出站标签名和用户标识
+1. **选择运行位置** — 你在哪台机器上运行（决定需要哪些 SSH 信息）
+2. **入口节点** — 填写 IP 和 SSH 信息（如果在本机运行则跳过 SSH）
+3. **出口节点** — 填写 IP 和 SSH 信息（如果在本机运行则跳过 SSH）
+4. **Cloudflare** — 主域名和 API Token
+5. **域名** — 面板域名、入口域名、WG 域名（默认复用入口域名）
+6. **面板与检查** — 出站标签、用户标识、出口地区代码（可选）
 
-### 向导会自动做什么
+### 关于域名
 
-1. 生成 WireGuard 密钥对（无需手动操作）
-2. 通过 SSH 连接两台 VPS
-3. 自动安装 WireGuard 和 sing-box（如果未安装）
-4. 生成并下发所有配置文件
-5. 启动相关服务
-6. 保存配置到本地 `wgstack.json`
+- **面板域名**：访问 3x-ui / x-panel 管理界面的域名，通常解析到入口节点
+- **入口域名**：客户端连接代理时使用的域名，通常也解析到入口节点
+- **WG 域名**：出口节点通过 WireGuard 连接入口节点时使用的地址
 
-### 部署完成后
-
-部署完成后，向导会详细告诉你去面板里还需要做什么。具体步骤见下一节。
+面板域名和入口域名虽然通常指向同一台服务器，但用途不同。WG 域名在大多数场景下可以直接复用入口域名，不需要单独配置。
 
 ## 程序做了什么 / 没做什么
 
 ### 程序自动完成的
 
-- 在两台 VPS 上安装 WireGuard 和 sing-box
+- 在两台节点上安装 WireGuard 和 sing-box
 - 生成 WireGuard 密钥对和配置文件
 - 生成 sing-box 配置文件
-- 通过 SSH 下发配置到远程服务器
+- 通过 SSH（或本机）下发配置到服务器
 - 启动和管理 WireGuard、sing-box 服务
-- 检测美国入口的公网 IP
-- 同步 Cloudflare DNS 记录（入口域名、面板域名、WG 域名）
-- 美国 IP 变化后自动修复 DNS 和隧道
+- 检测入口节点的公网 IP
+- 同步 Cloudflare DNS 记录
+- 入口 IP 变化后自动修复 DNS 和隧道
 
 ### 程序不会做的
 
 - **不会自动配置 3x-ui / x-panel**：面板的入站、出站、路由规则需要你手动设置
-- **不会修改面板数据库**：程序只管底层链路，不碰面板
-- **不会自动续费或管理 VPS**：VPS 的购买和维护是你自己的事
-- **不会配置防火墙规则**：如果 VPS 有额外防火墙，需要你手动放通端口
-- **不会处理 TLS 证书**：面板的 HTTPS 证书配置由面板自己处理
+- **不会修改面板数据库**：程序只管底层链路
+- **不会自动续费或管理 VPS**
+- **不会配置防火墙规则**：如需放通端口，请手动操作
+- **不会处理 TLS 证书**
 
 ## 面板里要做什么
 
@@ -108,22 +120,22 @@ wgstack
 
 在面板的「出站」设置中添加：
 
-- **标签/tag**：`hk-socks`
+- **标签/tag**：`exit-socks`（或你在向导里填的标签）
 - **协议**：SOCKS
-- **地址**：`10.66.66.2`
+- **地址**：`10.66.66.2`（出口节点的 WireGuard 内网地址）
 - **端口**：`10808`
 - **用户名和密码**：留空
 - **MUX**：关闭
 
-### 2. 添加香港专用入站/节点
+### 2. 添加专用线路入站/节点
 
-- 入口地址使用美国域名（如 `us.example.com`），**不要用香港的内网地址**
-- 绑定一个专用用户标识（如 `hk-user@local`）
+- 入口地址使用**入口域名**，**不要用出口节点的真实地址**
+- 绑定一个专用用户标识（如 `exit-user@local`）
 
 ### 3. 添加路由规则
 
-- **匹配用户**：`hk-user@local`
-- **出站标签**：`hk-socks`
+- **匹配用户**：填你在上一步绑定的用户标识
+- **出站标签**：填 SOCKS 出站的标签
 - 其他字段留空
 
 ### 4. 保存并重启
@@ -132,17 +144,13 @@ wgstack
 
 ### 5. 验证
 
-用客户端连接香港专用节点，访问 [ifconfig.me](https://ifconfig.me)，应该显示香港 IP。
+用客户端连接专用线路节点，访问 [ifconfig.me](https://ifconfig.me)，确认出口 IP 符合预期。
 
 ## 安全说明
 
 ### 配置文件里有什么敏感信息
 
-`wgstack.json` 中包含：
-
-- SSH 密码（如果你选了密码登录）
-- Cloudflare API Token
-- WireGuard 私钥
+`wgstack.json` 中包含 SSH 密码（如果选了密码登录）、Cloudflare API Token 和 WireGuard 私钥。
 
 ### 程序做了哪些保护
 
@@ -151,30 +159,24 @@ wgstack
 
 ### 你可以进一步做的
 
-- **用环境变量代替明文密码**：在 `wgstack.json` 中，把 `password` 留空，设置 `password_env` 为环境变量名（如 `US_SSH_PASSWORD`），程序会自动读取
-- **Cloudflare Token 同理**：把 `token` 留空，设置 `token_env` 为 `CLOUDFLARE_API_TOKEN`，然后 `export CLOUDFLARE_API_TOKEN=你的token`
+- **用环境变量代替明文密码**：在 `wgstack.json` 中把 `password` 留空，设置 `password_env` 为环境变量名
+- **Cloudflare Token 同理**：把 `token` 留空，设置 `token_env` 为 `CLOUDFLARE_API_TOKEN`
 - **不要把 `wgstack.json` 提交到 Git**：`.gitignore` 已经包含了它
-- **用私钥登录代替密码**：更安全也更方便，向导里选"私钥文件"即可
+- **优先使用私钥登录**：更安全也更方便
 
 ## 日常维护
 
-### 美国 IP 变了
-
-运行以下命令，工具会自动更新 Cloudflare DNS 并刷新 WireGuard 隧道：
+### 入口 IP 变了
 
 ```bash
 wgstack reconcile
 ```
 
-预览变更但不执行：
+自动检测新 IP、更新 DNS、刷新隧道。加 `--dry-run` 可预览变更。
 
-```bash
-wgstack reconcile --dry-run
-```
+### 出口 IP 变了
 
-### 香港出口 IP 变了
-
-不需要操作。WireGuard 隧道不受影响，因为香港是主动连接方（会自动重连到美国的域名）。
+不需要操作。WireGuard 隧道不受影响（出口节点是主动连接方，会自动重连）。
 
 ### 检查连通性
 
@@ -182,11 +184,7 @@ wgstack reconcile --dry-run
 wgstack health --live
 ```
 
-会检查 DNS 解析、WireGuard 握手、SOCKS 监听、出口位置等。
-
 ### 重新部署
-
-修改了配置或需要重新部署：
 
 ```bash
 wgstack apply
@@ -198,59 +196,50 @@ wgstack apply
 wgstack
 ```
 
-如果已有配置文件，会显示主菜单供你选择操作。
-
 ## 常见问题
 
 ### SSH 连接失败
 
 - 检查 IP 地址是否正确
-- 确认 SSH 端口是 22（如果不是，需要在配置中修改）
-- 检查用户名和密码（或私钥路径）是否正确
-- 确认 VPS 防火墙允许 SSH 连接
-- 如果用私钥登录，确认私钥文件路径正确且文件存在
+- 确认 SSH 端口是 22
+- 检查用户名和密码/私钥是否正确
+- 确认防火墙允许 SSH
 
 ### Cloudflare Token 不对
 
-- 在 [Cloudflare 控制台](https://dash.cloudflare.com/profile/api-tokens) 检查 Token 是否有效
-- Token 需要有 **Zone - DNS - Edit** 权限
+- 在 [Cloudflare 控制台](https://dash.cloudflare.com/profile/api-tokens) 检查 Token
+- 需要 **Zone - DNS - Edit** 权限
 - 确认 Zone 域名拼写正确
 
-### 香港出口不通
+### 出口不通
 
 - 运行 `wgstack health --live` 查看各项状态
-- 如果 WireGuard 握手时间为 0，说明隧道未建立
-- 检查香港 VPS 的防火墙是否放通了 WireGuard 端口（默认 51820）
-- 检查 sing-box 是否正在运行
+- WireGuard 握手为 0 说明隧道未建立
+- 检查防火墙是否放通了 WireGuard 端口（默认 51820）
 
-### 美国 IP 变了之后怎么恢复
+### 部署失败了
 
-运行 `wgstack reconcile`，会自动：
-
-1. 检测美国 VPS 的新 IP
-2. 更新 Cloudflare DNS 记录
-3. 重启香港侧 WireGuard 以连接新地址
-
-### 想修改配置怎么办
-
-运行 `wgstack setup` 重新走部署向导，或直接编辑 `wgstack.json` 后运行 `wgstack apply`。
-
-### 部署失败了怎么办
-
-- 程序会明确告诉你哪一步失败了
-- 配置文件已经保存，修复问题后运行 `wgstack apply` 重试即可
-- 常见原因：SSH 密码错误、VPS 无法连接、防火墙阻止
+- 程序会明确告诉你哪一步失败
+- 配置已保存，修复后运行 `wgstack apply` 重试
 
 ## 高级用法
 
-如果你熟悉命令行，也可以直接用参数模式：
+```bash
+wgstack init          # 生成配置模板
+wgstack plan          # 查看部署计划
+wgstack render        # 生成本地配置文件
+wgstack apply         # 部署到服务器
+wgstack guide         # 查看面板操作说明
+wgstack health --live # 实时健康检查
+wgstack reconcile     # 同步 DNS
+```
+
+所有命令支持 `--config path` 指定配置文件。
+
+在目标节点本机运行时，加上 `--local-entry` 或 `--local-exit` 参数：
 
 ```bash
-wgstack init                              # 生成配置模板
-wgstack plan --config wgstack.json        # 查看部署计划
-wgstack render --config wgstack.json      # 生成本地配置文件
-wgstack apply --config wgstack.json       # 部署到服务器
-wgstack guide --config wgstack.json       # 查看面板操作说明
-wgstack health --config wgstack.json --live  # 实时健康检查
-wgstack reconcile --config wgstack.json   # 同步 DNS
+wgstack apply --local-entry          # 在入口节点上部署
+wgstack health --live --local-exit   # 在出口节点上检查
+wgstack reconcile --local-entry      # 在入口节点上同步 DNS
 ```

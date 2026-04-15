@@ -31,7 +31,7 @@ func TestGenerate(t *testing.T) {
 
 	found := false
 	for _, file := range files {
-		if file.Path == "out/hk/sing-box.json" {
+		if file.Path == "out/exit/sing-box.json" {
 			found = true
 			if !strings.Contains(file.Content, `"listen": "10.66.66.2"`) {
 				t.Fatalf("sing-box config missing listen IP: %s", file.Content)
@@ -43,13 +43,12 @@ func TestGenerate(t *testing.T) {
 	}
 
 	if !found {
-		t.Fatal("Generate() did not render out/hk/sing-box.json")
+		t.Fatal("Generate() did not render out/exit/sing-box.json")
 	}
 }
 
 func TestGenerateRejectsEmptyKeys(t *testing.T) {
 	project := config.DefaultProject()
-	// Keys are empty by default
 	_, err := Generate(project)
 	if err == nil {
 		t.Fatal("Generate() expected error for empty WG keys")

@@ -64,7 +64,7 @@ func runInteractive(stdout io.Writer) error {
 }
 
 func runSetupWizard(stdout io.Writer) error {
-	project, shouldDeploy, err := wizard.RunSetup(stdout)
+	project, rc, shouldDeploy, err := wizard.RunSetup(stdout)
 	if err != nil {
 		return err
 	}
@@ -80,7 +80,7 @@ func runSetupWizard(stdout io.Writer) error {
 	}
 
 	fmt.Fprint(stdout, "\n--- 开始部署 ---\n\n")
-	if err := deploy.Apply(project, stdout, true); err != nil {
+	if err := deploy.Apply(project, stdout, true, rc); err != nil {
 		fmt.Fprintf(stdout, "\n配置已保存到 %s，你可以修复问题后运行 wgstack apply 重试。\n", config.DefaultPath)
 		return fmt.Errorf("部署失败: %w", err)
 	}
@@ -113,8 +113,8 @@ func runMenu(stdout io.Writer) error {
 	fmt.Fprintln(stdout, "========================================")
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "当前配置: %s\n", config.DefaultPath)
-	fmt.Fprintf(stdout, "  美国入口: %s@%s\n", project.Nodes.US.SSH.User, project.Nodes.US.Host)
-	fmt.Fprintf(stdout, "  香港出口: %s@%s\n", project.Nodes.HK.SSH.User, project.Nodes.HK.Host)
+	fmt.Fprintf(stdout, "  入口节点: %s@%s\n", project.Nodes.US.SSH.User, project.Nodes.US.Host)
+	fmt.Fprintf(stdout, "  出口节点: %s@%s\n", project.Nodes.HK.SSH.User, project.Nodes.HK.Host)
 	fmt.Fprintf(stdout, "  入口域名: %s\n", project.Domains.Entry)
 	fmt.Fprintln(stdout)
 
@@ -131,20 +131,21 @@ func runMenu(stdout io.Writer) error {
 		return p.Err()
 	}
 
+	rc := model.RunContext{}
 	switch choice {
 	case 0:
 		return runSetupWizard(stdout)
 	case 1:
-		return deploy.Apply(project, stdout, true)
+		return deploy.Apply(project, stdout, true, rc)
 	case 2:
-		probes, liveErr := health.RunLive(project)
+		probes, liveErr := health.RunLive(project, rc)
 		if liveErr != nil {
 			return liveErr
 		}
 		fmt.Fprint(stdout, "\n连通性检查结果：\n\n")
 		fmt.Fprint(stdout, health.RenderLive(probes))
 	case 3:
-		return reconcile.Run(context.Background(), project, stdout, reconcile.Options{StatePath: ".wgstack-state.json"})
+		return reconcile.Run(context.Background(), project, stdout, reconcile.Options{StatePath: ".wgstack-state.json"}, rc)
 	case 4:
 		fmt.Fprintln(stdout)
 		fmt.Fprint(stdout, guide.Render(project))
@@ -170,24 +171,24 @@ func runInit(args []string, stdout io.Writer) error {
 
 	project := config.DefaultProject()
 
-	usKey, err := keygen.Generate()
+	entryKey, err := keygen.Generate()
 	if err != nil {
 		return err
 	}
-	hkKey, err := keygen.Generate()
+	exitKey, err := keygen.Generate()
 	if err != nil {
 		return err
 	}
-	project.Nodes.US.WGPrivateKey = usKey.PrivateKey
-	project.Nodes.US.WGPublicKey = usKey.PublicKey
-	project.Nodes.HK.WGPrivateKey = hkKey.PrivateKey
-	project.Nodes.HK.WGPublicKey = hkKey.PublicKey
+	project.Nodes.US.WGPrivateKey = entryKey.PrivateKey
+	project.Nodes.US.WGPublicKey = entryKey.PublicKey
+	project.Nodes.HK.WGPrivateKey = exitKey.PrivateKey
+	project.Nodes.HK.WGPublicKey = exitKey.PublicKey
 
 	if err := config.Save(*path, project); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "已生成配置模板: %s\n", *path)
-	fmt.Fprintln(stdout, "请编辑该文件填入真实的 VPS 信息，然后运行 wgstack apply")
+	fmt.Fprintln(stdout, "请编辑该文件填入真实的节点信息，然后运行 wgstack apply")
 	return nil
 }
 
@@ -197,7 +198,7 @@ func runPlan(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "Project: %s\n\n", project.Project)
+	fmt.Fprintf(stdout, "项目: %s\n\n", project.Project)
 	fmt.Fprint(stdout, planner.Render(planner.Build(project)))
 	return nil
 }
@@ -224,7 +225,7 @@ func runRender(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "Rendered %d files into %s\n", len(files), filepath.Clean(*outDir))
+	fmt.Fprintf(stdout, "已渲染 %d 个文件到 %s\n", len(files), filepath.Clean(*outDir))
 	for _, file := range files {
 		fmt.Fprintf(stdout, "- %s\n", filepath.Join(filepath.Clean(*outDir), file.Path))
 	}
@@ -246,6 +247,8 @@ func runApply(args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
 	path := fs.String("config", config.DefaultPath, "config file path")
 	activate := fs.Bool("activate", true, "enable and restart remote services after upload")
+	localEntry := fs.Bool("local-entry", false, "当前机器即入口节点，跳过入口节点 SSH")
+	localExit := fs.Bool("local-exit", false, "当前机器即出口节点，跳过出口节点 SSH")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -255,7 +258,11 @@ func runApply(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	return deploy.Apply(project, stdout, *activate)
+	rc := model.RunContext{
+		EntryIsLocal: *localEntry,
+		ExitIsLocal:  *localExit,
+	}
+	return deploy.Apply(project, stdout, *activate, rc)
 }
 
 func runHealth(args []string, stdout io.Writer) error {
@@ -263,6 +270,8 @@ func runHealth(args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
 	path := fs.String("config", config.DefaultPath, "config file path")
 	live := fs.Bool("live", false, "run live checks over SSH and DNS")
+	localEntry := fs.Bool("local-entry", false, "当前机器即入口节点，跳过入口节点 SSH")
+	localExit := fs.Bool("local-exit", false, "当前机器即出口节点，跳过出口节点 SSH")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -273,16 +282,20 @@ func runHealth(args []string, stdout io.Writer) error {
 	}
 
 	if *live {
-		probes, liveErr := health.RunLive(project)
+		rc := model.RunContext{
+			EntryIsLocal: *localEntry,
+			ExitIsLocal:  *localExit,
+		}
+		probes, liveErr := health.RunLive(project, rc)
 		if liveErr != nil {
 			return liveErr
 		}
-		fmt.Fprintf(stdout, "Live health checks for %s\n\n", project.Project)
+		fmt.Fprintf(stdout, "%s 实时健康检查\n\n", project.Project)
 		fmt.Fprint(stdout, health.RenderLive(probes))
 		return nil
 	}
 
-	fmt.Fprintf(stdout, "Expected health checks for %s\n\n", project.Project)
+	fmt.Fprintf(stdout, "%s 预期健康检查项\n\n", project.Project)
 	fmt.Fprint(stdout, health.Render(health.Expected(project)))
 	return nil
 }
@@ -293,6 +306,8 @@ func runReconcile(args []string, stdout io.Writer) error {
 	path := fs.String("config", config.DefaultPath, "config file path")
 	dryRun := fs.Bool("dry-run", false, "show changes without updating Cloudflare or restarting services")
 	statePath := fs.String("state", ".wgstack-state.json", "path to persist reconcile state")
+	localEntry := fs.Bool("local-entry", false, "当前机器即入口节点，跳过入口节点 SSH")
+	localExit := fs.Bool("local-exit", false, "当前机器即出口节点，跳过出口节点 SSH")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -302,7 +317,11 @@ func runReconcile(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	return reconcile.Run(context.Background(), project, stdout, reconcile.Options{DryRun: *dryRun, StatePath: *statePath})
+	rc := model.RunContext{
+		EntryIsLocal: *localEntry,
+		ExitIsLocal:  *localExit,
+	}
+	return reconcile.Run(context.Background(), project, stdout, reconcile.Options{DryRun: *dryRun, StatePath: *statePath}, rc)
 }
 
 func loadProject(args []string) (model.Project, error) {
@@ -331,4 +350,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  guide        查看面板操作说明")
 	fmt.Fprintln(w, "  health       运行健康检查")
 	fmt.Fprintln(w, "  reconcile    同步 DNS / 修复 IP 漂移")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "节点本机运行时可用参数:")
+	fmt.Fprintln(w, "  --local-entry    当前机器即入口节点，跳过入口节点 SSH")
+	fmt.Fprintln(w, "  --local-exit     当前机器即出口节点，跳过出口节点 SSH")
 }

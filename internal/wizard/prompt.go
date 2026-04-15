@@ -140,6 +140,21 @@ func (p *Prompter) WaitEnter() {
 	}
 }
 
+// OptionalLine reads a single line of input that may be left empty.
+// Unlike Line/LineWith, an empty response is accepted without looping.
+func (p *Prompter) OptionalLine(prompt string) string {
+	if p.err != nil {
+		return ""
+	}
+	fmt.Fprintf(p.writer, "%s: ", prompt)
+	line, err := p.reader.ReadString('\n')
+	if err != nil {
+		p.err = err
+		return ""
+	}
+	return strings.TrimSpace(line)
+}
+
 func IsTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }

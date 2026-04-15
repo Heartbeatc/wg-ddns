@@ -21,36 +21,36 @@ type Options struct {
 	StatePath string
 }
 
-func Run(ctx context.Context, project model.Project, stdout io.Writer, opts Options) error {
-	if err := config.ValidateDeploy(project); err != nil {
+func Run(ctx context.Context, project model.Project, stdout io.Writer, opts Options, rc model.RunContext) error {
+	if err := config.ValidateDeploy(project, rc); err != nil {
 		return err
 	}
 
-	usClient, err := sshclient.Dial(project.Nodes.US)
+	entryClient, err := sshclient.DialOrLocal(project.Nodes.US, rc.EntryIsLocal)
 	if err != nil {
 		return err
 	}
-	defer usClient.Close()
+	defer entryClient.Close()
 
-	usIP, err := health.DetectPublicIPv4(usClient, project.Checks.PublicIPCheckURL)
+	entryIP, err := health.DetectPublicIPv4(entryClient, project.Checks.PublicIPCheckURL)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Observed US public IP: %s\n", usIP)
+	fmt.Fprintf(stdout, "检测到入口节点公网 IP: %s\n", entryIP)
 
 	cf, err := cloudflare.New(project.Cloudflare)
 	if err != nil {
 		return err
 	}
 
-	names := []string{project.Domains.Entry, project.Domains.Panel, project.Domains.WireGuard}
-	changes, err := cf.EnsureDNSRecords(ctx, project.Cloudflare, names, usIP, opts.DryRun)
+	names := project.Domains.Unique()
+	changes, err := cf.EnsureDNSRecords(ctx, project.Cloudflare, names, entryIP, opts.DryRun)
 	if err != nil {
 		return err
 	}
 
 	if len(changes) == 0 {
-		fmt.Fprintln(stdout, "Cloudflare records are already in sync.")
+		fmt.Fprintln(stdout, "Cloudflare 记录已同步。")
 	} else {
 		for _, change := range changes {
 			if change.Action == "create" {
@@ -62,25 +62,25 @@ func Run(ctx context.Context, project model.Project, stdout io.Writer, opts Opti
 	}
 
 	if !opts.DryRun && len(changes) > 0 {
-		hkClient, err := sshclient.Dial(project.Nodes.HK)
+		exitClient, err := sshclient.DialOrLocal(project.Nodes.HK, rc.ExitIsLocal)
 		if err != nil {
 			return err
 		}
-		defer hkClient.Close()
+		defer exitClient.Close()
 
 		command := fmt.Sprintf("systemctl restart %s", project.Nodes.HK.WGService)
-		fmt.Fprintf(stdout, "Refreshing HK WireGuard endpoint via %s\n", command)
-		out, err := hkClient.RunShell(command)
+		fmt.Fprintf(stdout, "重启出口节点 WireGuard 以更新入口地址: %s\n", command)
+		out, err := exitClient.RunShell(command)
 		if err != nil {
 			msg := strings.TrimSpace(out)
 			if msg != "" {
-				return fmt.Errorf("%s failed: %w: %s", command, err, msg)
+				return fmt.Errorf("%s 失败: %w: %s", command, err, msg)
 			}
-			return fmt.Errorf("%s failed: %w", command, err)
+			return fmt.Errorf("%s 失败: %w", command, err)
 		}
 	}
 
-	probes, err := health.RunLive(project)
+	probes, err := health.RunLive(project, rc)
 	if err != nil {
 		return err
 	}
@@ -99,13 +99,13 @@ func Run(ctx context.Context, project model.Project, stdout io.Writer, opts Opti
 		if err := state.Save(opts.StatePath, state.File{
 			Version:          1,
 			LastReconciledAt: time.Now().UTC(),
-			LastObservedUSIP: usIP,
+			LastObservedUSIP: entryIP,
 			LastDNSChanges:   changeLines,
 			LastProbes:       probes,
 		}); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "\nSaved reconcile state to %s\n", filepath.Clean(opts.StatePath))
+		fmt.Fprintf(stdout, "\n同步状态已保存到 %s\n", filepath.Clean(opts.StatePath))
 	}
 
 	return nil

@@ -24,10 +24,10 @@ func Render(project model.Project) string {
 	fmt.Fprintln(&b, "   - MUX:          关闭")
 	fmt.Fprintln(&b)
 
-	fmt.Fprintln(&b, "2. 添加香港专用入站/节点")
-	fmt.Fprintf(&b, "   - 入口地址用美国域名: %s\n", project.Domains.Entry)
-	fmt.Fprintln(&b, "   - 不要用香港内网地址")
-	fmt.Fprintf(&b, "   - 绑定专用用户标识:   %s\n", project.PanelGuide.RouteUser)
+	fmt.Fprintln(&b, "2. 添加专用线路入站/节点")
+	fmt.Fprintf(&b, "   - 入口地址使用入口域名: %s\n", project.Domains.Entry)
+	fmt.Fprintln(&b, "   - 不要使用出口节点的真实地址")
+	fmt.Fprintf(&b, "   - 绑定专用用户标识:     %s\n", project.PanelGuide.RouteUser)
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "3. 添加路由规则")
@@ -40,14 +40,18 @@ func Render(project model.Project) string {
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "5. 验证")
-	fmt.Fprintln(&b, "   - 用客户端连接香港专用节点")
+	fmt.Fprintln(&b, "   - 用客户端连接专用线路节点")
 	fmt.Fprintf(&b, "   - 访问 %s\n", project.Checks.TestURL)
-	fmt.Fprintf(&b, "   - 应该显示出口位置: %s\n", project.Checks.ExitLocation)
+	if project.Checks.ExitLocation != "" {
+		fmt.Fprintf(&b, "   - 应该显示出口位置: %s\n", project.Checks.ExitLocation)
+	} else {
+		fmt.Fprintln(&b, "   - 确认出口 IP 符合预期")
+	}
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "提示：")
-	fmt.Fprintln(&b, "   - 如果美国入口 IP 发生变化，运行 wgstack reconcile 即可自动修复")
-	fmt.Fprintln(&b, "   - 如果香港出口 IP 变化，WireGuard 隧道不受影响（香港是主动连接方）")
+	fmt.Fprintln(&b, "   - 如果入口节点 IP 发生变化，运行 wgstack reconcile 即可自动修复")
+	fmt.Fprintln(&b, "   - 出口节点 IP 变化不影响隧道（出口是主动连接方，会自动重连）")
 
 	return b.String()
 }
