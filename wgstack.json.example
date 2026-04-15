@@ -10,7 +10,7 @@
   },
   "domains": {
     "entry": "entry.example.com",
-    "panel": "panel.example.com",
+    "panel": "entry.example.com",
     "wireguard": "entry.example.com"
   },
   "nodes": {
@@ -67,5 +67,12 @@
     "exit_check_url": "https://ifconfig.me/country_code",
     "public_ip_check_url": "https://ifconfig.me/ip",
     "exit_location": ""
+  },
+  "notifications": {
+    "enabled": false,
+    "telegram": {
+      "bot_token_env": "TELEGRAM_BOT_TOKEN",
+      "chat_id": ""
+    }
   }
 }

@@ -25,8 +25,11 @@ func Render(project model.Project) string {
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "2. 添加专用线路入站/节点")
-	fmt.Fprintf(&b, "   - 入口地址使用入口域名: %s\n", project.Domains.Entry)
-	fmt.Fprintln(&b, "   - 不要使用出口节点的真实地址")
+	fmt.Fprintf(&b, "   - 节点地址使用你的对外域名: %s\n", project.Domains.Entry)
+	if project.Domains.Panel == project.Domains.Entry {
+		fmt.Fprintln(&b, "   - 面板和代理入口共用同一个域名是正常的，真正区分用途的是端口")
+	}
+	fmt.Fprintln(&b, "   - 不要填写出口节点的真实地址")
 	fmt.Fprintf(&b, "   - 绑定专用用户标识:     %s\n", project.PanelGuide.RouteUser)
 	fmt.Fprintln(&b)
 

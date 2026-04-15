@@ -12,9 +12,10 @@ import (
 )
 
 type Probe struct {
-	Name   string
-	Status string
-	Detail string
+	Name     string
+	Status   string
+	Detail   string
+	Duration time.Duration
 }
 
 func RunLive(project model.Project, rc model.RunContext) ([]Probe, error) {
@@ -36,20 +37,31 @@ func RunLive(project model.Project, rc model.RunContext) ([]Probe, error) {
 	}
 
 	return []Probe{
-		checkDNS(project, entryIP),
-		checkWG(entryClient, "入口"),
-		checkWG(exitClient, "出口"),
-		checkExitSocks(exitClient, project),
-		checkEgress(entryClient, project),
+		timed(func() Probe { return checkDNS(project, entryIP) }),
+		timed(func() Probe { return checkWG(entryClient, "入口") }),
+		timed(func() Probe { return checkWG(exitClient, "出口") }),
+		timed(func() Probe { return checkExitSocks(exitClient, project) }),
+		timed(func() Probe { return checkEgress(entryClient, project) }),
 	}, nil
 }
 
 func RenderLive(probes []Probe) string {
 	var b strings.Builder
 	for _, probe := range probes {
-		fmt.Fprintf(&b, "- [%s] %s: %s\n", probe.Status, probe.Name, probe.Detail)
+		if probe.Duration > 0 {
+			fmt.Fprintf(&b, "- [%s] %s: %s (%s)\n", probe.Status, probe.Name, probe.Detail, probe.Duration.Round(time.Millisecond))
+		} else {
+			fmt.Fprintf(&b, "- [%s] %s: %s\n", probe.Status, probe.Name, probe.Detail)
+		}
 	}
 	return b.String()
+}
+
+func timed(fn func() Probe) Probe {
+	start := time.Now()
+	p := fn()
+	p.Duration = time.Since(start)
+	return p
 }
 
 func checkDNS(project model.Project, entryIP string) Probe {

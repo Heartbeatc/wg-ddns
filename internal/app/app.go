@@ -14,6 +14,7 @@ import (
 	"wg-ddns/internal/health"
 	"wg-ddns/internal/keygen"
 	"wg-ddns/internal/model"
+	"wg-ddns/internal/notify"
 	"wg-ddns/internal/planner"
 	"wg-ddns/internal/reconcile"
 	"wg-ddns/internal/render"
@@ -79,11 +80,16 @@ func runSetupWizard(stdout io.Writer) error {
 		return nil
 	}
 
+	notif := notify.FromConfig(project.Notifications, stdout)
+
 	fmt.Fprint(stdout, "\n--- 开始部署 ---\n\n")
 	if err := deploy.Apply(project, stdout, true, rc); err != nil {
+		notify.Fire(stdout, notif, notify.FormatApplyFailure(project.Project, err.Error()))
 		fmt.Fprintf(stdout, "\n配置已保存到 %s，你可以修复问题后运行 wgstack apply 重试。\n", config.DefaultPath)
 		return fmt.Errorf("部署失败: %w", err)
 	}
+
+	notify.Fire(stdout, notif, notify.FormatApplySuccess(project.Project, project.Nodes.US.Host, project.Nodes.HK.Host))
 
 	fmt.Fprintln(stdout, "\n--- 部署完成 ---")
 	fmt.Fprint(stdout, "\n底层部署已完成！接下来需要去面板中完成最后几步：\n\n")
@@ -115,7 +121,7 @@ func runMenu(stdout io.Writer) error {
 	fmt.Fprintf(stdout, "当前配置: %s\n", config.DefaultPath)
 	fmt.Fprintf(stdout, "  入口节点: %s@%s\n", project.Nodes.US.SSH.User, project.Nodes.US.Host)
 	fmt.Fprintf(stdout, "  出口节点: %s@%s\n", project.Nodes.HK.SSH.User, project.Nodes.HK.Host)
-	fmt.Fprintf(stdout, "  入口域名: %s\n", project.Domains.Entry)
+	fmt.Fprintf(stdout, "  对外域名: %s\n", project.Domains.Entry)
 	fmt.Fprintln(stdout)
 
 	choice := p.Select("请选择操作:", []string{
@@ -131,21 +137,44 @@ func runMenu(stdout io.Writer) error {
 		return p.Err()
 	}
 
-	rc := model.RunContext{}
+	notif := notify.FromConfig(project.Notifications, stdout)
+
 	switch choice {
 	case 0:
 		return runSetupWizard(stdout)
 	case 1:
-		return deploy.Apply(project, stdout, true, rc)
+		rc := wizard.AskRunContext(p)
+		if p.Err() != nil {
+			return p.Err()
+		}
+		if err := deploy.Apply(project, stdout, true, rc); err != nil {
+			notify.Fire(stdout, notif, notify.FormatApplyFailure(project.Project, err.Error()))
+			return err
+		}
+		notify.Fire(stdout, notif, notify.FormatApplySuccess(project.Project, project.Nodes.US.Host, project.Nodes.HK.Host))
 	case 2:
+		rc := wizard.AskRunContext(p)
+		if p.Err() != nil {
+			return p.Err()
+		}
 		probes, liveErr := health.RunLive(project, rc)
 		if liveErr != nil {
+			notify.Fire(stdout, notif, notify.FormatHealthRunError(project.Project, liveErr.Error()))
 			return liveErr
 		}
 		fmt.Fprint(stdout, "\n连通性检查结果：\n\n")
 		fmt.Fprint(stdout, health.RenderLive(probes))
+		notifyHealthIfFailed(stdout, notif, project.Project, probes)
 	case 3:
-		return reconcile.Run(context.Background(), project, stdout, reconcile.Options{StatePath: ".wgstack-state.json"}, rc)
+		rc := wizard.AskRunContext(p)
+		if p.Err() != nil {
+			return p.Err()
+		}
+		result, runErr := reconcile.Run(context.Background(), project, stdout, reconcile.Options{StatePath: ".wgstack-state.json"}, rc)
+		handleReconcileResult(stdout, notif, project, result, runErr)
+		if runErr != nil {
+			return runErr
+		}
 	case 4:
 		fmt.Fprintln(stdout)
 		fmt.Fprint(stdout, guide.Render(project))
@@ -247,8 +276,7 @@ func runApply(args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
 	path := fs.String("config", config.DefaultPath, "config file path")
 	activate := fs.Bool("activate", true, "enable and restart remote services after upload")
-	localEntry := fs.Bool("local-entry", false, "当前机器即入口节点，跳过入口节点 SSH")
-	localExit := fs.Bool("local-exit", false, "当前机器即出口节点，跳过出口节点 SSH")
+	localEntry, localExit := addRunContextFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -258,11 +286,14 @@ func runApply(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	rc := model.RunContext{
-		EntryIsLocal: *localEntry,
-		ExitIsLocal:  *localExit,
+	notif := notify.FromConfig(project.Notifications, stdout)
+	rc := buildRunContext(localEntry, localExit)
+	if err := deploy.Apply(project, stdout, *activate, rc); err != nil {
+		notify.Fire(stdout, notif, notify.FormatApplyFailure(project.Project, err.Error()))
+		return err
 	}
-	return deploy.Apply(project, stdout, *activate, rc)
+	notify.Fire(stdout, notif, notify.FormatApplySuccess(project.Project, project.Nodes.US.Host, project.Nodes.HK.Host))
+	return nil
 }
 
 func runHealth(args []string, stdout io.Writer) error {
@@ -270,8 +301,7 @@ func runHealth(args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
 	path := fs.String("config", config.DefaultPath, "config file path")
 	live := fs.Bool("live", false, "run live checks over SSH and DNS")
-	localEntry := fs.Bool("local-entry", false, "当前机器即入口节点，跳过入口节点 SSH")
-	localExit := fs.Bool("local-exit", false, "当前机器即出口节点，跳过出口节点 SSH")
+	localEntry, localExit := addRunContextFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -282,16 +312,16 @@ func runHealth(args []string, stdout io.Writer) error {
 	}
 
 	if *live {
-		rc := model.RunContext{
-			EntryIsLocal: *localEntry,
-			ExitIsLocal:  *localExit,
-		}
+		rc := buildRunContext(localEntry, localExit)
+		notif := notify.FromConfig(project.Notifications, stdout)
 		probes, liveErr := health.RunLive(project, rc)
 		if liveErr != nil {
+			notify.Fire(stdout, notif, notify.FormatHealthRunError(project.Project, liveErr.Error()))
 			return liveErr
 		}
 		fmt.Fprintf(stdout, "%s 实时健康检查\n\n", project.Project)
 		fmt.Fprint(stdout, health.RenderLive(probes))
+		notifyHealthIfFailed(stdout, notif, project.Project, probes)
 		return nil
 	}
 
@@ -306,8 +336,7 @@ func runReconcile(args []string, stdout io.Writer) error {
 	path := fs.String("config", config.DefaultPath, "config file path")
 	dryRun := fs.Bool("dry-run", false, "show changes without updating Cloudflare or restarting services")
 	statePath := fs.String("state", ".wgstack-state.json", "path to persist reconcile state")
-	localEntry := fs.Bool("local-entry", false, "当前机器即入口节点，跳过入口节点 SSH")
-	localExit := fs.Bool("local-exit", false, "当前机器即出口节点，跳过出口节点 SSH")
+	localEntry, localExit := addRunContextFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -317,11 +346,86 @@ func runReconcile(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	rc := model.RunContext{
+	notif := notify.FromConfig(project.Notifications, stdout)
+	rc := buildRunContext(localEntry, localExit)
+	result, runErr := reconcile.Run(context.Background(), project, stdout, reconcile.Options{DryRun: *dryRun, StatePath: *statePath}, rc)
+	handleReconcileResult(stdout, notif, project, result, runErr)
+	return runErr
+}
+
+// handleReconcileResult sends the appropriate notification after a reconcile run.
+func handleReconcileResult(stdout io.Writer, notif notify.Notifier, project model.Project, result reconcile.Result, err error) {
+	if notify.IsNop(notif) {
+		return
+	}
+
+	if err != nil {
+		notify.Fire(stdout, notif, notify.FormatReconcileFailure(project.Project, err.Error()))
+		return
+	}
+
+	if !result.IPChanged {
+		return
+	}
+
+	var ipInfo *notify.IPInfo
+	info, lookupErr := notify.LookupIP(context.Background(), result.EntryIP)
+	if lookupErr == nil {
+		ipInfo = &info
+	}
+
+	notify.Fire(stdout, notif, notify.FormatReconcileSuccess(
+		project.Project,
+		result.EntryIP,
+		result.Changes,
+		probesToInfos(result.Probes),
+		ipInfo,
+	))
+}
+
+// notifyHealthIfFailed sends a notification when any probe has failed.
+func notifyHealthIfFailed(stdout io.Writer, notif notify.Notifier, project string, probes []health.Probe) {
+	if notify.IsNop(notif) {
+		return
+	}
+	hasFail := false
+	for _, p := range probes {
+		if p.Status == "FAIL" {
+			hasFail = true
+			break
+		}
+	}
+	if !hasFail {
+		return
+	}
+	notify.Fire(stdout, notif, notify.FormatHealthFailure(project, probesToInfos(probes)))
+}
+
+func probesToInfos(probes []health.Probe) []notify.ProbeInfo {
+	infos := make([]notify.ProbeInfo, len(probes))
+	for i, p := range probes {
+		infos[i] = notify.ProbeInfo{
+			Name:     p.Name,
+			Status:   p.Status,
+			Detail:   p.Detail,
+			Duration: p.Duration,
+		}
+	}
+	return infos
+}
+
+// addRunContextFlags registers --local-entry and --local-exit on a FlagSet.
+func addRunContextFlags(fs *flag.FlagSet) (localEntry, localExit *bool) {
+	localEntry = fs.Bool("local-entry", false, "当前机器即入口节点，跳过入口节点 SSH")
+	localExit = fs.Bool("local-exit", false, "当前机器即出口节点，跳过出口节点 SSH")
+	return
+}
+
+func buildRunContext(localEntry, localExit *bool) model.RunContext {
+	return model.RunContext{
 		EntryIsLocal: *localEntry,
 		ExitIsLocal:  *localExit,
 	}
-	return reconcile.Run(context.Background(), project, stdout, reconcile.Options{DryRun: *dryRun, StatePath: *statePath}, rc)
 }
 
 func loadProject(args []string) (model.Project, error) {

@@ -27,7 +27,7 @@ func DefaultProject() model.Project {
 		},
 		Domains: model.Domains{
 			Entry:     "entry.example.com",
-			Panel:     "panel.example.com",
+			Panel:     "entry.example.com",
 			WireGuard: "entry.example.com",
 		},
 		Nodes: model.Nodes{
@@ -81,6 +81,12 @@ func DefaultProject() model.Project {
 			PublicIPCheckURL: "https://ifconfig.me/ip",
 			ExitLocation:     "",
 		},
+		Notifications: model.Notifications{
+			Enabled: false,
+			Telegram: model.TelegramConfig{
+				BotTokenEnv: "TELEGRAM_BOT_TOKEN",
+			},
+		},
 	}
 }
 
@@ -129,82 +135,51 @@ func Save(path string, project model.Project) error {
 
 func Validate(project model.Project) error {
 	var missing []string
+	require := func(label, val string) {
+		if strings.TrimSpace(val) == "" {
+			missing = append(missing, label)
+		}
+	}
 
-	if strings.TrimSpace(project.Project) == "" {
-		missing = append(missing, "project")
-	}
-	if strings.TrimSpace(project.Cloudflare.Zone) == "" {
-		missing = append(missing, "cloudflare.zone")
-	}
+	require("project", project.Project)
+
+	// Cloudflare
+	require("cloudflare.zone", project.Cloudflare.Zone)
 	if strings.TrimSpace(project.Cloudflare.Token) == "" && strings.TrimSpace(project.Cloudflare.TokenEnv) == "" {
 		missing = append(missing, "cloudflare.token or cloudflare.token_env")
 	}
-	if strings.TrimSpace(project.Cloudflare.RecordType) == "" {
-		missing = append(missing, "cloudflare.record_type")
-	}
-	if strings.TrimSpace(project.Domains.Entry) == "" {
-		missing = append(missing, "domains.entry")
-	}
-	if strings.TrimSpace(project.Domains.Panel) == "" {
-		missing = append(missing, "domains.panel")
-	}
-	if strings.TrimSpace(project.Domains.WireGuard) == "" {
-		missing = append(missing, "domains.wireguard")
-	}
-	if strings.TrimSpace(project.Nodes.US.Host) == "" {
-		missing = append(missing, "nodes.us.host")
-	}
-	if strings.TrimSpace(project.Nodes.HK.Host) == "" {
-		missing = append(missing, "nodes.hk.host")
-	}
-	if strings.TrimSpace(project.Nodes.US.SSH.User) == "" {
-		missing = append(missing, "nodes.us.ssh.user")
-	}
-	if strings.TrimSpace(project.Nodes.HK.SSH.User) == "" {
-		missing = append(missing, "nodes.hk.ssh.user")
-	}
-	if strings.TrimSpace(project.Nodes.US.WGAddress) == "" {
-		missing = append(missing, "nodes.us.wg_address")
-	}
-	if strings.TrimSpace(project.Nodes.HK.WGAddress) == "" {
-		missing = append(missing, "nodes.hk.wg_address")
-	}
+	require("cloudflare.record_type", project.Cloudflare.RecordType)
+
+	// Domains
+	require("domains.entry", project.Domains.Entry)
+	require("domains.panel", project.Domains.Panel)
+	require("domains.wireguard", project.Domains.WireGuard)
+
+	// Entry node (US)
+	require("nodes.us.host", project.Nodes.US.Host)
+	require("nodes.us.ssh.user", project.Nodes.US.SSH.User)
+	require("nodes.us.wg_address", project.Nodes.US.WGAddress)
+	require("nodes.us.wg_config_path", project.Nodes.US.WGConfigPath)
+	require("nodes.us.wg_service", project.Nodes.US.WGService)
 	if project.Nodes.US.WGPort <= 0 {
 		missing = append(missing, "nodes.us.wg_port")
 	}
-	if strings.TrimSpace(project.Nodes.HK.SocksListen) == "" {
-		missing = append(missing, "nodes.hk.socks_listen")
-	}
-	if strings.TrimSpace(project.Nodes.US.WGConfigPath) == "" {
-		missing = append(missing, "nodes.us.wg_config_path")
-	}
-	if strings.TrimSpace(project.Nodes.HK.WGConfigPath) == "" {
-		missing = append(missing, "nodes.hk.wg_config_path")
-	}
-	if strings.TrimSpace(project.Nodes.US.WGService) == "" {
-		missing = append(missing, "nodes.us.wg_service")
-	}
-	if strings.TrimSpace(project.Nodes.HK.WGService) == "" {
-		missing = append(missing, "nodes.hk.wg_service")
-	}
-	if strings.TrimSpace(project.Nodes.HK.ProxyConfigPath) == "" {
-		missing = append(missing, "nodes.hk.proxy_config_path")
-	}
-	if strings.TrimSpace(project.Nodes.HK.ProxyService) == "" {
-		missing = append(missing, "nodes.hk.proxy_service")
-	}
-	if strings.TrimSpace(project.PanelGuide.OutboundTag) == "" {
-		missing = append(missing, "panel_guide.outbound_tag")
-	}
-	if strings.TrimSpace(project.PanelGuide.RouteUser) == "" {
-		missing = append(missing, "panel_guide.route_user")
-	}
-	if strings.TrimSpace(project.Checks.ExitCheckURL) == "" {
-		missing = append(missing, "healthcheck.exit_check_url")
-	}
-	if strings.TrimSpace(project.Checks.PublicIPCheckURL) == "" {
-		missing = append(missing, "healthcheck.public_ip_check_url")
-	}
+
+	// Exit node (HK)
+	require("nodes.hk.host", project.Nodes.HK.Host)
+	require("nodes.hk.ssh.user", project.Nodes.HK.SSH.User)
+	require("nodes.hk.wg_address", project.Nodes.HK.WGAddress)
+	require("nodes.hk.wg_config_path", project.Nodes.HK.WGConfigPath)
+	require("nodes.hk.wg_service", project.Nodes.HK.WGService)
+	require("nodes.hk.socks_listen", project.Nodes.HK.SocksListen)
+	require("nodes.hk.proxy_config_path", project.Nodes.HK.ProxyConfigPath)
+	require("nodes.hk.proxy_service", project.Nodes.HK.ProxyService)
+
+	// Panel guide & health checks
+	require("panel_guide.outbound_tag", project.PanelGuide.OutboundTag)
+	require("panel_guide.route_user", project.PanelGuide.RouteUser)
+	require("healthcheck.exit_check_url", project.Checks.ExitCheckURL)
+	require("healthcheck.public_ip_check_url", project.Checks.PublicIPCheckURL)
 
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required fields: %s", strings.Join(missing, ", "))

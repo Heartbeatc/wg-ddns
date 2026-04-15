@@ -81,40 +81,41 @@ func Apply(project model.Project, stdout io.Writer, activate bool, rc model.RunC
 	}
 
 	for _, entry := range entries {
-		if entry.isLocal {
-			fmt.Fprintf(stdout, "本机部署 %s\n", entry.label)
-		} else {
-			fmt.Fprintf(stdout, "连接 %s (%s)\n", entry.label, entry.node.Host)
-		}
-
-		client, err := sshclient.DialOrLocal(entry.node, entry.isLocal)
-		if err != nil {
-			return fmt.Errorf("无法连接 %s (%s): %w", entry.label, entry.node.Host, err)
-		}
-
-		if err := prepareNode(stdout, client, entry.key, entry.node); err != nil {
-			client.Close()
+		if err := deployNode(stdout, entry, files, activate); err != nil {
 			return err
 		}
+	}
 
-		if err := uploadNodeFiles(stdout, client, entry.key, files); err != nil {
-			client.Close()
-			return err
-		}
+	return nil
+}
 
-		if err := validateNode(stdout, client, entry.key, entry.node); err != nil {
-			client.Close()
-			return err
-		}
+func deployNode(stdout io.Writer, entry nodeEntry, files []RemoteFile, activate bool) error {
+	if entry.isLocal {
+		fmt.Fprintf(stdout, "本机部署 %s\n", entry.label)
+	} else {
+		fmt.Fprintf(stdout, "连接 %s (%s)\n", entry.label, entry.node.Host)
+	}
 
-		if activate && !entry.node.Deploy.UploadOnly {
-			if err := activateNode(stdout, client, entry.key, entry.node); err != nil {
-				client.Close()
-				return err
-			}
-		}
+	client, err := sshclient.DialOrLocal(entry.node, entry.isLocal)
+	if err != nil {
+		return fmt.Errorf("无法连接 %s (%s): %w", entry.label, entry.node.Host, err)
+	}
+	defer client.Close()
 
-		if err := client.Close(); err != nil {
+	if err := prepareNode(stdout, client, entry.key, entry.node); err != nil {
+		return err
+	}
+
+	if err := uploadNodeFiles(stdout, client, entry.key, files); err != nil {
+		return err
+	}
+
+	if err := validateNode(stdout, client, entry.key, entry.node); err != nil {
+		return err
+	}
+
+	if activate && !entry.node.Deploy.UploadOnly {
+		if err := activateNode(stdout, client, entry.key, entry.node); err != nil {
 			return err
 		}
 	}
@@ -159,12 +160,7 @@ func uploadNodeFiles(stdout io.Writer, client sshclient.Runner, nodeKey string, 
 func validateNode(stdout io.Writer, client sshclient.Runner, nodeKey string, node model.Node) error {
 	if nodeKey == "exit" && strings.EqualFold(node.Proxy, "sing-box") {
 		fmt.Fprintf(stdout, "  验证 sing-box 配置 %s\n", node.ProxyConfigPath)
-		out, err := client.RunShell(fmt.Sprintf("sing-box check -c %s", quoteArg(node.ProxyConfigPath)))
-		if err != nil {
-			msg := strings.TrimSpace(out)
-			if msg != "" {
-				return fmt.Errorf("sing-box 配置验证失败: %w: %s", err, msg)
-			}
+		if err := runCmd(client, fmt.Sprintf("sing-box check -c %s", quoteArg(node.ProxyConfigPath))); err != nil {
 			return fmt.Errorf("sing-box 配置验证失败: %w", err)
 		}
 	}
@@ -185,14 +181,23 @@ func activateNode(stdout io.Writer, client sshclient.Runner, nodeKey string, nod
 
 	for _, command := range commands {
 		fmt.Fprintf(stdout, "  执行 %s\n", command)
-		out, err := client.RunShell(command)
-		if err != nil {
-			msg := strings.TrimSpace(out)
-			if msg != "" {
-				return fmt.Errorf("%s 失败: %w: %s", command, err, msg)
-			}
-			return fmt.Errorf("%s 失败: %w", command, err)
+		if err := runCmd(client, command); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// runCmd executes a shell command and wraps any error with the command text
+// and captured stderr/stdout.
+func runCmd(client sshclient.Runner, command string) error {
+	out, err := client.RunShell(command)
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if msg != "" {
+			return fmt.Errorf("%s 失败: %w: %s", command, err, msg)
+		}
+		return fmt.Errorf("%s 失败: %w", command, err)
 	}
 	return nil
 }

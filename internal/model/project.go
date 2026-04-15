@@ -9,12 +9,24 @@ type RunContext struct {
 }
 
 type Project struct {
-	Project    string      `json:"project"`
-	Cloudflare Cloudflare  `json:"cloudflare"`
-	Domains    Domains     `json:"domains"`
-	Nodes      Nodes       `json:"nodes"`
-	PanelGuide PanelGuide  `json:"panel_guide"`
-	Checks     HealthCheck `json:"healthcheck"`
+	Project       string        `json:"project"`
+	Cloudflare    Cloudflare    `json:"cloudflare"`
+	Domains       Domains       `json:"domains"`
+	Nodes         Nodes         `json:"nodes"`
+	PanelGuide    PanelGuide    `json:"panel_guide"`
+	Checks        HealthCheck   `json:"healthcheck"`
+	Notifications Notifications `json:"notifications"`
+}
+
+type Notifications struct {
+	Enabled  bool           `json:"enabled"`
+	Telegram TelegramConfig `json:"telegram"`
+}
+
+type TelegramConfig struct {
+	BotToken    string `json:"bot_token,omitempty"`
+	BotTokenEnv string `json:"bot_token_env,omitempty"`
+	ChatID      string `json:"chat_id,omitempty"`
 }
 
 type Cloudflare struct {
@@ -46,9 +58,12 @@ func (d Domains) Unique() []string {
 	return result
 }
 
+// Nodes holds the two deployment targets.
+// US/HK are historical JSON key names retained for config compatibility;
+// they represent the entry node and exit node respectively.
 type Nodes struct {
-	US Node `json:"us"`
-	HK Node `json:"hk"`
+	US Node `json:"us"` // entry node
+	HK Node `json:"hk"` // exit node
 }
 
 type Node struct {
