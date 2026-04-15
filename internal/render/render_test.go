@@ -1,14 +1,26 @@
 package render
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
 	"wg-ddns/internal/config"
 )
 
+func validTestKey() string {
+	return base64.StdEncoding.EncodeToString(make([]byte, 32))
+}
+
 func TestGenerate(t *testing.T) {
-	files, err := Generate(config.DefaultProject())
+	project := config.DefaultProject()
+	k := validTestKey()
+	project.Nodes.US.WGPrivateKey = k
+	project.Nodes.US.WGPublicKey = k
+	project.Nodes.HK.WGPrivateKey = k
+	project.Nodes.HK.WGPublicKey = k
+
+	files, err := Generate(project)
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -32,5 +44,14 @@ func TestGenerate(t *testing.T) {
 
 	if !found {
 		t.Fatal("Generate() did not render out/hk/sing-box.json")
+	}
+}
+
+func TestGenerateRejectsEmptyKeys(t *testing.T) {
+	project := config.DefaultProject()
+	// Keys are empty by default
+	_, err := Generate(project)
+	if err == nil {
+		t.Fatal("Generate() expected error for empty WG keys")
 	}
 }

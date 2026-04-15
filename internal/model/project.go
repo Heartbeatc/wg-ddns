@@ -11,7 +11,8 @@ type Project struct {
 
 type Cloudflare struct {
 	Zone       string `json:"zone"`
-	TokenEnv   string `json:"token_env"`
+	Token      string `json:"token,omitempty"`
+	TokenEnv   string `json:"token_env,omitempty"`
 	RecordType string `json:"record_type,omitempty"`
 	TTL        int    `json:"ttl,omitempty"`
 	Proxied    bool   `json:"proxied,omitempty"`
@@ -34,6 +35,8 @@ type Node struct {
 	SSH             SSH        `json:"ssh"`
 	WGAddress       string     `json:"wg_address"`
 	WGPort          int        `json:"wg_port,omitempty"`
+	WGPrivateKey    string     `json:"wg_private_key,omitempty"`
+	WGPublicKey     string     `json:"wg_public_key,omitempty"`
 	SocksListen     string     `json:"socks_listen,omitempty"`
 	Proxy           string     `json:"proxy,omitempty"`
 	WGConfigPath    string     `json:"wg_config_path,omitempty"`

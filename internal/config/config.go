@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ func DefaultProject() model.Project {
 		Project: "us-entry-hk-exit",
 		Cloudflare: model.Cloudflare{
 			Zone:       "example.com",
+			Token:      "",
 			TokenEnv:   "CLOUDFLARE_API_TOKEN",
 			RecordType: "A",
 			TTL:        120,
@@ -122,7 +124,7 @@ func Save(path string, project model.Project) error {
 		return fmt.Errorf("encode config: %w", err)
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func Validate(project model.Project) error {
@@ -134,8 +136,8 @@ func Validate(project model.Project) error {
 	if strings.TrimSpace(project.Cloudflare.Zone) == "" {
 		missing = append(missing, "cloudflare.zone")
 	}
-	if strings.TrimSpace(project.Cloudflare.TokenEnv) == "" {
-		missing = append(missing, "cloudflare.token_env")
+	if strings.TrimSpace(project.Cloudflare.Token) == "" && strings.TrimSpace(project.Cloudflare.TokenEnv) == "" {
+		missing = append(missing, "cloudflare.token or cloudflare.token_env")
 	}
 	if strings.TrimSpace(project.Cloudflare.RecordType) == "" {
 		missing = append(missing, "cloudflare.record_type")
@@ -215,35 +217,55 @@ func Validate(project model.Project) error {
 }
 
 func ValidateDeploy(project model.Project) error {
-	var missing []string
+	var problems []string
 
 	if project.Nodes.US.SSH.Port <= 0 {
-		missing = append(missing, "nodes.us.ssh.port")
+		problems = append(problems, "nodes.us.ssh.port")
 	}
 	if project.Nodes.HK.SSH.Port <= 0 {
-		missing = append(missing, "nodes.hk.ssh.port")
+		problems = append(problems, "nodes.hk.ssh.port")
 	}
 
 	checkAuth := func(prefix string, ssh model.SSH) {
 		switch ssh.AuthMethod {
 		case "password":
 			if strings.TrimSpace(ssh.Password) == "" && strings.TrimSpace(ssh.PasswordEnv) == "" {
-				missing = append(missing, prefix+".password or "+prefix+".password_env")
+				problems = append(problems, prefix+".password or "+prefix+".password_env")
 			}
 		case "private_key":
 			if strings.TrimSpace(ssh.PrivateKeyPath) == "" {
-				missing = append(missing, prefix+".private_key_path")
+				problems = append(problems, prefix+".private_key_path")
 			}
 		default:
-			missing = append(missing, prefix+".auth_method")
+			problems = append(problems, prefix+".auth_method")
 		}
 	}
 
 	checkAuth("nodes.us.ssh", project.Nodes.US.SSH)
 	checkAuth("nodes.hk.ssh", project.Nodes.HK.SSH)
 
-	if len(missing) > 0 {
-		return fmt.Errorf("deploy config incomplete: %s", strings.Join(missing, ", "))
+	checkWGKey := func(label, key string) {
+		if strings.TrimSpace(key) == "" {
+			problems = append(problems, label+" 为空")
+			return
+		}
+		data, err := base64.StdEncoding.DecodeString(key)
+		if err != nil {
+			problems = append(problems, label+" 不是有效的 base64")
+			return
+		}
+		if len(data) != 32 {
+			problems = append(problems, fmt.Sprintf("%s 长度不正确（需要 32 字节，实际 %d）", label, len(data)))
+		}
+	}
+
+	checkWGKey("美国 WG 私钥 (nodes.us.wg_private_key)", project.Nodes.US.WGPrivateKey)
+	checkWGKey("美国 WG 公钥 (nodes.us.wg_public_key)", project.Nodes.US.WGPublicKey)
+	checkWGKey("香港 WG 私钥 (nodes.hk.wg_private_key)", project.Nodes.HK.WGPrivateKey)
+	checkWGKey("香港 WG 公钥 (nodes.hk.wg_public_key)", project.Nodes.HK.WGPublicKey)
+
+	if len(problems) > 0 {
+		return fmt.Errorf("部署配置不完整: %s", strings.Join(problems, ", "))
 	}
 
 	return nil

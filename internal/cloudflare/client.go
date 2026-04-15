@@ -50,9 +50,12 @@ type responseError struct {
 }
 
 func New(cfg model.Cloudflare) (*Client, error) {
-	token := os.Getenv(cfg.TokenEnv)
+	token := cfg.Token
 	if token == "" {
-		return nil, fmt.Errorf("cloudflare token env %q is empty", cfg.TokenEnv)
+		token = os.Getenv(cfg.TokenEnv)
+	}
+	if token == "" {
+		return nil, fmt.Errorf("cloudflare token 为空（已检查 token 字段和环境变量 %q）", cfg.TokenEnv)
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: 15 * time.Second},

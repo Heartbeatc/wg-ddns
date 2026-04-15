@@ -58,6 +58,11 @@ func BuildFiles(project model.Project) ([]RemoteFile, error) {
 	return files, nil
 }
 
+type nodeEntry struct {
+	key  string
+	node model.Node
+}
+
 func Apply(project model.Project, stdout io.Writer, activate bool) error {
 	if err := config.ValidateDeploy(project); err != nil {
 		return err
@@ -68,16 +73,20 @@ func Apply(project model.Project, stdout io.Writer, activate bool) error {
 		return err
 	}
 
-	nodes := map[string]model.Node{
-		"us": project.Nodes.US,
-		"hk": project.Nodes.HK,
+	// Deterministic order: US first (entry), then HK (exit).
+	entries := []nodeEntry{
+		{"us", project.Nodes.US},
+		{"hk", project.Nodes.HK},
 	}
 
-	for key, node := range nodes {
+	for _, entry := range entries {
+		key := entry.key
+		node := entry.node
+
 		fmt.Fprintf(stdout, "Connecting to %s (%s)\n", key, node.Host)
 		client, err := sshclient.Dial(node)
 		if err != nil {
-			return err
+			return fmt.Errorf("无法连接 %s (%s): %w", key, node.Host, err)
 		}
 
 		if err := prepareNode(stdout, client, key, node); err != nil {

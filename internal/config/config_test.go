@@ -1,6 +1,14 @@
 package config
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+)
+
+// validTestKey returns a valid base64-encoded 32-byte WireGuard key for testing.
+func validTestKey() string {
+	return base64.StdEncoding.EncodeToString(make([]byte, 32))
+}
 
 func TestValidateDefaultProject(t *testing.T) {
 	if err := Validate(DefaultProject()); err != nil {
@@ -19,8 +27,14 @@ func TestValidateMissingFields(t *testing.T) {
 
 func TestValidateDeploy(t *testing.T) {
 	project := DefaultProject()
+	k := validTestKey()
+	project.Nodes.US.WGPrivateKey = k
+	project.Nodes.US.WGPublicKey = k
+	project.Nodes.HK.WGPrivateKey = k
+	project.Nodes.HK.WGPublicKey = k
+
 	if err := ValidateDeploy(project); err != nil {
-		t.Fatalf("ValidateDeploy(DefaultProject()) error = %v", err)
+		t.Fatalf("ValidateDeploy() error = %v", err)
 	}
 }
 
@@ -30,6 +44,26 @@ func TestValidateDeployMissingAuth(t *testing.T) {
 
 	if err := ValidateDeploy(project); err == nil {
 		t.Fatal("ValidateDeploy() expected error for missing private key path")
+	}
+}
+
+func TestValidateDeployMissingWGKeys(t *testing.T) {
+	project := DefaultProject()
+	// Keys are empty by default in DefaultProject
+	if err := ValidateDeploy(project); err == nil {
+		t.Fatal("ValidateDeploy() expected error for missing WG keys")
+	}
+}
+
+func TestValidateDeployInvalidWGKey(t *testing.T) {
+	project := DefaultProject()
+	project.Nodes.US.WGPrivateKey = "not-valid-base64!!!"
+	project.Nodes.US.WGPublicKey = validTestKey()
+	project.Nodes.HK.WGPrivateKey = validTestKey()
+	project.Nodes.HK.WGPublicKey = validTestKey()
+
+	if err := ValidateDeploy(project); err == nil {
+		t.Fatal("ValidateDeploy() expected error for invalid WG key format")
 	}
 }
 

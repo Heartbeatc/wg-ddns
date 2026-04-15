@@ -12,19 +12,22 @@ import (
 	"wg-ddns/internal/deploy"
 	"wg-ddns/internal/guide"
 	"wg-ddns/internal/health"
+	"wg-ddns/internal/keygen"
 	"wg-ddns/internal/model"
 	"wg-ddns/internal/planner"
 	"wg-ddns/internal/reconcile"
 	"wg-ddns/internal/render"
+	"wg-ddns/internal/wizard"
 )
 
 func Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		printUsage(stdout)
-		return nil
+		return runInteractive(stdout)
 	}
 
 	switch args[0] {
+	case "setup":
+		return runSetupWizard(stdout)
 	case "init":
 		return runInit(args[1:], stdout)
 	case "plan":
@@ -48,6 +51,109 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
+func runInteractive(stdout io.Writer) error {
+	if !wizard.IsTerminal() {
+		printUsage(stdout)
+		return nil
+	}
+
+	if _, err := os.Stat(config.DefaultPath); os.IsNotExist(err) {
+		return runSetupWizard(stdout)
+	}
+	return runMenu(stdout)
+}
+
+func runSetupWizard(stdout io.Writer) error {
+	project, shouldDeploy, err := wizard.RunSetup(stdout)
+	if err != nil {
+		return err
+	}
+
+	if err := config.Save(config.DefaultPath, project); err != nil {
+		return fmt.Errorf("保存配置失败: %w", err)
+	}
+	fmt.Fprintf(stdout, "\n配置已保存到 %s\n", config.DefaultPath)
+
+	if !shouldDeploy {
+		fmt.Fprintln(stdout, "\n你可以稍后运行 wgstack apply 来部署。")
+		return nil
+	}
+
+	fmt.Fprint(stdout, "\n--- 开始部署 ---\n\n")
+	if err := deploy.Apply(project, stdout, true); err != nil {
+		fmt.Fprintf(stdout, "\n配置已保存到 %s，你可以修复问题后运行 wgstack apply 重试。\n", config.DefaultPath)
+		return fmt.Errorf("部署失败: %w", err)
+	}
+
+	fmt.Fprintln(stdout, "\n--- 部署完成 ---")
+	fmt.Fprint(stdout, "\n底层部署已完成！接下来需要去面板中完成最后几步：\n\n")
+	fmt.Fprint(stdout, guide.Render(project))
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "日常维护命令：")
+	fmt.Fprintln(stdout, "  wgstack                  打开主菜单")
+	fmt.Fprintln(stdout, "  wgstack health --live     检查连通性")
+	fmt.Fprintln(stdout, "  wgstack reconcile         同步 DNS / 修复 IP 漂移")
+	fmt.Fprintln(stdout, "  wgstack apply             重新部署")
+	return nil
+}
+
+func runMenu(stdout io.Writer) error {
+	project, err := config.Load(config.DefaultPath)
+	if err != nil {
+		fmt.Fprintf(stdout, "无法读取配置文件 %s：%v\n\n", config.DefaultPath, err)
+		fmt.Fprintln(stdout, "运行 wgstack setup 重新配置。")
+		return nil
+	}
+
+	p := wizard.NewPrompter(stdout)
+
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "========================================")
+	fmt.Fprintln(stdout, "  wgstack 主菜单")
+	fmt.Fprintln(stdout, "========================================")
+	fmt.Fprintln(stdout)
+	fmt.Fprintf(stdout, "当前配置: %s\n", config.DefaultPath)
+	fmt.Fprintf(stdout, "  美国入口: %s@%s\n", project.Nodes.US.SSH.User, project.Nodes.US.Host)
+	fmt.Fprintf(stdout, "  香港出口: %s@%s\n", project.Nodes.HK.SSH.User, project.Nodes.HK.Host)
+	fmt.Fprintf(stdout, "  入口域名: %s\n", project.Domains.Entry)
+	fmt.Fprintln(stdout)
+
+	choice := p.Select("请选择操作:", []string{
+		"重新配置（运行部署向导）",
+		"部署到服务器",
+		"检查连通性",
+		"同步 DNS / 修复 IP 漂移",
+		"查看面板操作说明",
+		"退出",
+	})
+
+	if p.Err() != nil {
+		return p.Err()
+	}
+
+	switch choice {
+	case 0:
+		return runSetupWizard(stdout)
+	case 1:
+		return deploy.Apply(project, stdout, true)
+	case 2:
+		probes, liveErr := health.RunLive(project)
+		if liveErr != nil {
+			return liveErr
+		}
+		fmt.Fprint(stdout, "\n连通性检查结果：\n\n")
+		fmt.Fprint(stdout, health.RenderLive(probes))
+	case 3:
+		return reconcile.Run(context.Background(), project, stdout, reconcile.Options{StatePath: ".wgstack-state.json"})
+	case 4:
+		fmt.Fprintln(stdout)
+		fmt.Fprint(stdout, guide.Render(project))
+	case 5:
+		// exit
+	}
+	return nil
+}
+
 func runInit(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -56,17 +162,32 @@ func runInit(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	project := config.DefaultProject()
 	if _, err := os.Stat(*path); err == nil {
-		return fmt.Errorf("config already exists: %s", *path)
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := config.Save(*path, project); err != nil {
+		return fmt.Errorf("配置文件已存在: %s", *path)
+	} else if !os.IsNotExist(err) {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "Created sample config at %s\n", *path)
+	project := config.DefaultProject()
+
+	usKey, err := keygen.Generate()
+	if err != nil {
+		return err
+	}
+	hkKey, err := keygen.Generate()
+	if err != nil {
+		return err
+	}
+	project.Nodes.US.WGPrivateKey = usKey.PrivateKey
+	project.Nodes.US.WGPublicKey = usKey.PublicKey
+	project.Nodes.HK.WGPrivateKey = hkKey.PrivateKey
+	project.Nodes.HK.WGPublicKey = hkKey.PublicKey
+
+	if err := config.Save(*path, project); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "已生成配置模板: %s\n", *path)
+	fmt.Fprintln(stdout, "请编辑该文件填入真实的 VPS 信息，然后运行 wgstack apply")
 	return nil
 }
 
@@ -152,9 +273,9 @@ func runHealth(args []string, stdout io.Writer) error {
 	}
 
 	if *live {
-		probes, err := health.RunLive(project)
-		if err != nil {
-			return err
+		probes, liveErr := health.RunLive(project)
+		if liveErr != nil {
+			return liveErr
 		}
 		fmt.Fprintf(stdout, "Live health checks for %s\n\n", project.Project)
 		fmt.Fprint(stdout, health.RenderLive(probes))
@@ -196,14 +317,18 @@ func loadProject(args []string) (model.Project, error) {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "wgstack <command>")
+	fmt.Fprintln(w, "wgstack - 代理底层部署工具")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  init    Create a sample JSON config")
-	fmt.Fprintln(w, "  plan    Show the deployment plan")
-	fmt.Fprintln(w, "  render  Render WireGuard and sing-box configs locally")
-	fmt.Fprintln(w, "  apply   Upload configs to remote hosts over SSH")
-	fmt.Fprintln(w, "  guide   Print manual panel steps")
-	fmt.Fprintln(w, "  health  Print expected checks or run live probes")
-	fmt.Fprintln(w, "  reconcile  Sync Cloudflare DNS and refresh HK WireGuard when needed")
+	fmt.Fprintln(w, "用法:")
+	fmt.Fprintln(w, "  wgstack              进入交互式主菜单")
+	fmt.Fprintln(w, "  wgstack setup        运行部署向导")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "高级命令:")
+	fmt.Fprintln(w, "  init         生成配置模板")
+	fmt.Fprintln(w, "  plan         查看部署计划")
+	fmt.Fprintln(w, "  render       生成本地配置文件")
+	fmt.Fprintln(w, "  apply        部署到服务器")
+	fmt.Fprintln(w, "  guide        查看面板操作说明")
+	fmt.Fprintln(w, "  health       运行健康检查")
+	fmt.Fprintln(w, "  reconcile    同步 DNS / 修复 IP 漂移")
 }

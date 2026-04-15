@@ -1,13 +1,25 @@
 package deploy
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"wg-ddns/internal/config"
 )
 
+func validTestKey() string {
+	return base64.StdEncoding.EncodeToString(make([]byte, 32))
+}
+
 func TestBuildFiles(t *testing.T) {
-	files, err := BuildFiles(config.DefaultProject())
+	project := config.DefaultProject()
+	k := validTestKey()
+	project.Nodes.US.WGPrivateKey = k
+	project.Nodes.US.WGPublicKey = k
+	project.Nodes.HK.WGPrivateKey = k
+	project.Nodes.HK.WGPublicKey = k
+
+	files, err := BuildFiles(project)
 	if err != nil {
 		t.Fatalf("BuildFiles() error = %v", err)
 	}

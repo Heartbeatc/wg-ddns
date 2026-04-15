@@ -135,26 +135,87 @@ func checkExit(client *sshclient.Client, project model.Project) Probe {
 	return Probe{Name: "Egress", Status: "PASS", Detail: fmt.Sprintf("curl via %s returned %s", address.Host(project.Nodes.HK.SocksListen), value)}
 }
 
-func DetectPublicIPv4(client *sshclient.Client, externalURL string) (string, error) {
-	if externalURL != "" {
-		out, err := client.RunShell(fmt.Sprintf("curl -4fsS --max-time 15 %s", shellEscape(externalURL)))
-		if err == nil {
-			value := strings.TrimSpace(out)
-			if value != "" {
-				return value, nil
-			}
+var fallbackIPServices = []string{
+	"https://api.ipify.org",
+	"https://ipv4.icanhazip.com",
+}
+
+// DetectPublicIPv4 detects the public IPv4 of the remote host.
+// It tries the configured URL first, then falls back to well-known services.
+// It NEVER falls back to local route addresses to avoid returning private IPs
+// that would corrupt DNS records.
+func DetectPublicIPv4(client *sshclient.Client, primaryURL string) (string, error) {
+	urls := make([]string, 0, 1+len(fallbackIPServices))
+	if primaryURL != "" {
+		urls = append(urls, primaryURL)
+	}
+	for _, u := range fallbackIPServices {
+		if u != primaryURL {
+			urls = append(urls, u)
 		}
 	}
 
-	out, err := client.RunShell(`ip -4 route get 1.1.1.1 | awk '/src/ {for (i = 1; i <= NF; i++) if ($i == "src") {print $(i+1); exit}}'`)
-	if err != nil {
-		return "", fmt.Errorf("detect US public IP: %w: %s", err, strings.TrimSpace(out))
+	var lastErr error
+	for _, u := range urls {
+		out, err := client.RunShell(fmt.Sprintf("curl -4fsS --max-time 10 %s", shellEscape(u)))
+		if err != nil {
+			lastErr = fmt.Errorf("请求 %s 失败: %w", u, err)
+			continue
+		}
+		ip := strings.TrimSpace(out)
+		if ip == "" {
+			continue
+		}
+		if !IsPublicIPv4(ip) {
+			lastErr = fmt.Errorf("从 %s 获取到的 IP %q 不是合法公网 IPv4 地址", u, ip)
+			continue
+		}
+		return ip, nil
 	}
-	value := strings.TrimSpace(out)
-	if value == "" {
-		return "", fmt.Errorf("detect US public IP: empty output")
+
+	if lastErr != nil {
+		return "", fmt.Errorf("无法检测公网 IP: %w", lastErr)
 	}
-	return value, nil
+	return "", fmt.Errorf("无法检测公网 IP: 所有检测服务均未返回有效结果")
+}
+
+// IsPublicIPv4 returns true if s is a valid, globally routable IPv4 address.
+// It rejects private (RFC 1918), loopback, link-local, CGNAT, multicast,
+// and other reserved ranges.
+func IsPublicIPv4(s string) bool {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return false
+	}
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	if v4[0] == 0 {
+		return false // 0.0.0.0/8
+	}
+	if v4[0] == 10 {
+		return false // 10.0.0.0/8
+	}
+	if v4[0] == 127 {
+		return false // 127.0.0.0/8
+	}
+	if v4[0] == 169 && v4[1] == 254 {
+		return false // 169.254.0.0/16 link-local
+	}
+	if v4[0] == 172 && v4[1] >= 16 && v4[1] <= 31 {
+		return false // 172.16.0.0/12
+	}
+	if v4[0] == 192 && v4[1] == 168 {
+		return false // 192.168.0.0/16
+	}
+	if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+		return false // 100.64.0.0/10 CGNAT
+	}
+	if v4[0] >= 224 {
+		return false // 224.0.0.0/4 multicast + 240.0.0.0/4 reserved
+	}
+	return true
 }
 
 func parseUnix(v string) (int64, error) {

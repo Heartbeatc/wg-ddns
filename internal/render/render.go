@@ -21,6 +21,10 @@ type File struct {
 }
 
 func Generate(project model.Project) ([]File, error) {
+	if err := checkRequiredKeys(project); err != nil {
+		return nil, err
+	}
+
 	files := []struct {
 		template string
 		path     string
@@ -50,6 +54,20 @@ func WriteAll(root string, files []File) error {
 		}
 		if err := os.WriteFile(target, []byte(file.Content), 0o644); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func checkRequiredKeys(p model.Project) error {
+	for _, kv := range []struct{ label, key string }{
+		{"美国节点 WireGuard 私钥", p.Nodes.US.WGPrivateKey},
+		{"美国节点 WireGuard 公钥", p.Nodes.US.WGPublicKey},
+		{"香港节点 WireGuard 私钥", p.Nodes.HK.WGPrivateKey},
+		{"香港节点 WireGuard 公钥", p.Nodes.HK.WGPublicKey},
+	} {
+		if kv.key == "" {
+			return fmt.Errorf("渲染配置失败: %s 为空，请运行 wgstack setup 生成密钥", kv.label)
 		}
 	}
 	return nil

@@ -1,4 +1,5 @@
 /build/
 /dist/
 /wgstack.json
+/.wgstack-state.json
 /wgstack

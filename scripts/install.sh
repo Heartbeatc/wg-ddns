@@ -128,7 +128,8 @@ main() {
   download_source
   build_binary
   install_binary
-  log '完成，执行 `wgstack --help` 查看命令'
+  log '安装完成！'
+  log '运行 wgstack 开始部署向导。'
 }
 
 main "$@"
