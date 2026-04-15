@@ -22,6 +22,7 @@ func TestReconcileScriptHasDNSDriftDetection(t *testing.T) {
 		{"saves state only when state is safe to persist", `if [ "$CAN_SAVE_STATE" = "true" ] && [ -n "$UPDATED" ]; then`},
 		{"waits for exit DNS before restart", `Waiting for exit node DNS to resolve $WG_ENDPOINT_DOMAIN -> $CURRENT_IP`},
 		{"checks exit resolver via getent", `getent ahostsv4 '$WG_ENDPOINT_DOMAIN'`},
+		{"keeps awk field reference escaped exactly once", `awk 'NR==1 {print \$1; exit}'`},
 		{"requires wg refresh success before save", `"$IP_CHANGED" = "true" ] && [ "$WG_STATUS" != "success" ]`},
 		{"tracks drifted domains", `DRIFTED=`},
 		{"logs trigger reason", `TRIGGER=`},

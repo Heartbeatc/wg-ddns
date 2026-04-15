@@ -186,7 +186,7 @@ if [ "$IP_CHANGED" = "true" ] && [ -n "$EXIT_SSH_HOST" ] && [ -f "$EXIT_SSH_KEY"
       -o ConnectTimeout=15 -o BatchMode=yes \
       -p "$EXIT_SSH_PORT" \
       "${EXIT_SSH_USER}@${EXIT_SSH_HOST}" \
-      "getent ahostsv4 '$WG_ENDPOINT_DOMAIN' 2>/dev/null | awk 'NR==1 {print \\$1; exit}'" 2>/dev/null || true)
+      "getent ahostsv4 '$WG_ENDPOINT_DOMAIN' 2>/dev/null | awk 'NR==1 {print \$1; exit}'" 2>/dev/null || true)
 
     if [ "$RESOLVED_ON_EXIT" = "$CURRENT_IP" ]; then
       DNS_READY=true
