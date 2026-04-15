@@ -86,6 +86,18 @@ func Apply(project model.Project, stdout io.Writer, activate bool, rc model.RunC
 		}
 	}
 
+	if activate && project.ExitDDNS.Enabled {
+		if err := DeployExitDDNS(stdout, project, rc); err != nil {
+			return err
+		}
+	}
+
+	if activate && project.EntryAutoReconcile.Enabled {
+		if err := DeployEntryAutoReconcile(stdout, project, rc); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

@@ -35,13 +35,23 @@ func RunLive(project model.Project, rc model.RunContext) ([]Probe, error) {
 		return nil, err
 	}
 
-	return []Probe{
+	probes := []Probe{
 		timed(func() Probe { return checkDNS(project, entryIP) }),
 		timed(func() Probe { return checkWG(entryClient, "入口") }),
 		timed(func() Probe { return checkWG(exitClient, "出口") }),
 		timed(func() Probe { return checkExitSocks(exitClient, project) }),
 		timed(func() Probe { return checkEgress(entryClient, project) }),
-	}, nil
+	}
+
+	if project.ExitDDNS.Enabled {
+		probes = append(probes, timed(func() Probe { return checkExitDDNS(exitClient) }))
+	}
+
+	if project.EntryAutoReconcile.Enabled {
+		probes = append(probes, timed(func() Probe { return checkEntryAutoReconcile(entryClient) }))
+	}
+
+	return probes, nil
 }
 
 func RenderLive(probes []Probe) string {
@@ -168,6 +178,75 @@ func checkEgress(client sshclient.Runner, project model.Project) Probe {
 		return Probe{Name: "出口验证", Status: "FAIL", Detail: fmt.Sprintf("期望 %s，实际 %s（出口 IP: %s）", project.Checks.ExitLocation, country, exitIP)}
 	}
 	return Probe{Name: "出口验证", Status: "PASS", Detail: fmt.Sprintf("出口 IP: %s，地区: %s", exitIP, country)}
+}
+
+func checkExitDDNS(client sshclient.Runner) Probe {
+	timerOut, timerErr := client.RunShell("systemctl is-active wgstack-ddns.timer 2>&1")
+	timerStatus := strings.TrimSpace(timerOut)
+	if timerErr != nil || timerStatus != "active" {
+		detail := "wgstack-ddns.timer 未运行"
+		if timerStatus != "" {
+			detail = fmt.Sprintf("wgstack-ddns.timer 状态: %s", timerStatus)
+		}
+		return Probe{Name: "出口管理 DDNS", Status: "FAIL", Detail: detail}
+	}
+
+	svcOut, _ := client.RunShell("systemctl show wgstack-ddns.service -p Result -p ExecMainStatus --no-pager 2>&1")
+	svcResult, svcExitCode := parseSvcStatus(svcOut)
+	if svcResult != "" && svcResult != "success" {
+		detail := fmt.Sprintf("timer 运行中，但最近一次执行失败: Result=%s, ExitCode=%s", svcResult, svcExitCode)
+		return Probe{Name: "出口管理 DDNS", Status: "FAIL", Detail: detail}
+	}
+
+	lastOut, _ := client.RunShell("cat /var/lib/wgstack/ddns_last_ip 2>/dev/null")
+	lastIP := strings.TrimSpace(lastOut)
+	if lastIP != "" {
+		return Probe{Name: "出口管理 DDNS", Status: "PASS", Detail: fmt.Sprintf("timer 运行中，最近 IP: %s", lastIP)}
+	}
+	return Probe{Name: "出口管理 DDNS", Status: "PASS", Detail: "timer 运行中（尚未记录 IP）"}
+}
+
+func checkEntryAutoReconcile(client sshclient.Runner) Probe {
+	timerOut, timerErr := client.RunShell("systemctl is-active wgstack-reconcile.timer 2>&1")
+	timerStatus := strings.TrimSpace(timerOut)
+	if timerErr != nil || timerStatus != "active" {
+		detail := "wgstack-reconcile.timer 未运行"
+		if timerStatus != "" {
+			detail = fmt.Sprintf("wgstack-reconcile.timer 状态: %s", timerStatus)
+		}
+		return Probe{Name: "入口自动修复", Status: "FAIL", Detail: detail}
+	}
+
+	svcOut, _ := client.RunShell("systemctl show wgstack-reconcile.service -p Result -p ExecMainStatus --no-pager 2>&1")
+	svcResult, svcExitCode := parseSvcStatus(svcOut)
+	if svcResult != "" && svcResult != "success" {
+		detail := fmt.Sprintf("timer 运行中，但最近一次执行失败: Result=%s, ExitCode=%s", svcResult, svcExitCode)
+		return Probe{Name: "入口自动修复", Status: "FAIL", Detail: detail}
+	}
+
+	lastOut, _ := client.RunShell("cat /var/lib/wgstack/reconcile_last_ip 2>/dev/null")
+	lastIP := strings.TrimSpace(lastOut)
+	if lastIP != "" {
+		return Probe{Name: "入口自动修复", Status: "PASS", Detail: fmt.Sprintf("timer 运行中，最近 IP: %s", lastIP)}
+	}
+	return Probe{Name: "入口自动修复", Status: "PASS", Detail: "timer 运行中（尚未记录 IP）"}
+}
+
+// parseSvcStatus extracts Result and ExecMainStatus from
+// `systemctl show ... -p Result -p ExecMainStatus` output.
+func parseSvcStatus(output string) (result, exitCode string) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if k, v, ok := strings.Cut(line, "="); ok {
+			switch k {
+			case "Result":
+				result = v
+			case "ExecMainStatus":
+				exitCode = v
+			}
+		}
+	}
+	return
 }
 
 var fallbackIPServices = []string{

@@ -95,6 +95,24 @@ wgstack apply --local-exit     # 在出口节点本机运行
 bash <(curl -Ls https://raw.githubusercontent.com/Heartbeatc/wg-ddns/main/scripts/install.sh)
 ```
 
+## 更新 wgstack
+
+已安装过的用户，直接运行：
+
+```bash
+wgstack self-update
+```
+
+程序会自动下载最新代码、编译并替换当前二进制。需要本机已安装 Go 编译器。
+
+如果需要更新到指定分支或标签：
+
+```bash
+wgstack self-update --ref main
+```
+
+如果当前安装路径需要 root 权限（如 `/usr/local/bin`），请使用 `sudo wgstack self-update`。
+
 ## 使用方法
 
 ### 首次使用
@@ -105,16 +123,25 @@ bash <(curl -Ls https://raw.githubusercontent.com/Heartbeatc/wg-ddns/main/script
 wgstack
 ```
 
-工具会自动进入部署向导，一步一步引导你完成配置和部署。
+工具会自动进入**菜单式配置向导**：主菜单列出各项配置，你可按任意顺序进入、反复修改；菜单上会显示每项「已配置 / 未配置」等状态。全部确认后，再通过「查看部署摘要」或「开始部署」统一校验并写入 `wgstack.json`（仅在保存或部署时落盘，切换菜单不会丢失已填内容）。
 
-### 向导流程
+### 配置菜单包含哪些项
 
-1. **选择运行位置** — 你在哪台机器上运行（决定需要哪些 SSH 信息）
-2. **入口节点** — 填写公网 IP、SSH 连接地址（可选，推荐域名）和 SSH 信息
-3. **出口节点** — 填写公网 IP、SSH 连接地址（可选）和 SSH 信息
-4. **Cloudflare** — 主域名和 API Token
-5. **域名** — 输入你的对外域名，确认面板和 WG Endpoint 是否复用（默认都复用）
-6. **面板与检查** — 出站标签、用户标识、出口地区代码（可选）
+1. **运行位置** — 本机是管理机、入口节点还是出口节点（决定哪些节点要填 SSH）
+2. **入口节点** — 公网 IP、SSH 地址（可选）、认证信息
+3. **出口节点** — 同上
+4. **Cloudflare** — Zone 与 API Token
+5. **域名** — 对外域名、面板域名是否分开、WG Endpoint 是否单独域名
+6. **出口管理 DDNS** — 家宽动态 IP 时是否启用 SSH 管理域名自动更新
+7. **入口自动修复** — 是否在入口节点启用定时自动修复
+8. **面板与检查** — 出站标签、路由用户、出口地区代码（可选）
+9. **逐项验证** — 可选：入口/出口 SSH 与 root、systemd；Cloudflare Token 与 Zone；域名解析与入口 IP 对比提示
+10. **查看部署摘要** — 展示全文摘要，并可从摘要中跳转回任一项修改，或确认部署
+11. **开始部署** — 校验通过后写入配置并执行部署
+12. **保存并退出** — 校验通过后仅写入 `wgstack.json`，不部署
+13. **放弃** — 不保存直接退出
+
+`wgstack setup` 与首次无配置文件时进入的是同一套菜单式流程。
 
 ## 程序做了什么 / 没做什么
 
@@ -127,7 +154,9 @@ wgstack
 - 启动和管理 WireGuard、sing-box 服务
 - 检测入口节点的公网 IP
 - 同步 Cloudflare DNS 记录
-- 入口 IP 变化后自动修复 DNS 和隧道
+- 入口 IP 变化后自动修复 DNS 和隧道（手动 reconcile 或自动定时修复）
+- 在入口节点部署自动修复定时器（可选，入口 IP 变化后自动更新 DNS + 刷新出口 WG + 推送通知）
+- 在出口节点部署管理 DDNS 更新器（可选，用于动态 IP 场景）
 
 ### 程序不会做的
 
@@ -232,6 +261,10 @@ Bot Token 支持环境变量注入：把 `bot_token` 留空，设置 `bot_token_
 
 ### 入口 IP 变了
 
+**如果已启用入口自动修复**（推荐），入口节点会自动检测 IP 变化并完成修复，无需手动操作。详见下方「入口自动修复」。
+
+**手动修复**：
+
 ```bash
 wgstack reconcile
 ```
@@ -244,7 +277,7 @@ wgstack reconcile
 
 WireGuard 隧道不受影响——出口节点是主动连接方，会自动重连。
 
-但如果你在本地/管理机上运行 `wgstack health` 或 `wgstack apply`，且出口节点的 `host` 写的是旧公网 IP（没有配置 `ssh_host`），工具会在 SSH 阶段失联。**如果出口节点使用家宽等动态公网 IP，强烈推荐配置 `ssh_host` 域名**，详见上方「关于 SSH 连接地址」。
+但如果你在本地/管理机上运行 `wgstack health` 或 `wgstack apply`，且出口节点的 `host` 写的是旧公网 IP（没有配置 `ssh_host`），工具会在 SSH 阶段失联。**如果出口节点使用家宽等动态公网 IP，强烈推荐启用出口管理 DDNS**，详见下方「出口管理 DDNS」。
 
 ### 检查连通性
 
@@ -263,6 +296,136 @@ wgstack apply
 ```bash
 wgstack
 ```
+
+## 入口自动修复
+
+### 这是什么
+
+入口节点的公网 IP 可能因为换机器、重启或运营商调整而变化；Cloudflare 上的 DNS 记录也可能被手动改动或意外偏离期望。启用入口自动修复后，**入口节点上会部署一个定时任务**，持续保持入口业务域名收敛到期望状态。它能处理两类情况：
+
+1. **入口 IP 变化** — IP 漂移后自动更新所有 DNS 记录并重启出口 WireGuard
+2. **DNS 记录漂移** — 即使 IP 没变，某条记录的 content/TTL/proxied 偏离期望值或记录被删除，也会自动修复
+
+如果 IP 没有变化且所有 DNS 记录都符合期望，定时任务会安静退出，不调用任何 API。
+
+### 与出口管理 DDNS 的区别
+
+| | 入口自动修复 | 出口管理 DDNS |
+|---|---|---|
+| 部署位置 | 入口节点 | 出口节点 |
+| 维护的域名 | 入口业务域名（面板、代理入口、WG Endpoint） | 出口 SSH 管理域名 |
+| 触发条件 | IP 变化 或 DNS 记录漂移 | IP 变化 |
+| 触发动作 | 更新 DNS + 重启出口 WG（仅 IP 变化时）+ 通知 | 仅更新 DNS |
+| 目的 | 持续保持入口业务域名收敛到期望状态 | 保持管理端能 SSH 到出口节点 |
+
+### 如何启用
+
+**向导方式**：首次运行 `wgstack` 时，向导第 7 步会询问是否启用入口自动修复，默认推荐开启。
+
+**手动配置**：在 `wgstack.json` 中添加：
+
+```json
+"entry_autoreconcile": {
+  "enabled": true,
+  "interval_seconds": 300
+}
+```
+
+### 部署了什么
+
+启用后，`wgstack apply` 会在入口节点上安装：
+
+| 文件 | 说明 |
+|------|------|
+| `/etc/wgstack/reconcile.env` | 自动修复配置（Cloudflare token、域名列表、出口 SSH 信息、Telegram） |
+| `/etc/wgstack/exit_key` | 入口→出口的 SSH 私钥（自动生成的 ed25519 密钥对） |
+| `/usr/local/bin/wgstack-reconcile` | 修复脚本（检测 IP + DNS 漂移 → 更新 DNS → 重启出口 WG → 通知） |
+| `wgstack-reconcile.service` | systemd oneshot 服务 |
+| `wgstack-reconcile.timer` | systemd 定时器（默认每 5 分钟） |
+
+同时会在出口节点的 `~/.ssh/authorized_keys` 中添加对应的公钥，授权入口节点 SSH 连接出口节点重启 WireGuard。
+
+配置文件 `/etc/wgstack/reconcile.env` 权限为 `0600`，其中包含 Cloudflare API token 和出口节点 SSH 信息。
+
+### 它依赖什么
+
+- 入口节点上的 `systemd`（定时任务）
+- 入口节点上的 `curl`（检测 IP 和调用 Cloudflare API）
+- 入口节点上的 `ssh`（重启出口 WG）
+- 对出口节点的 SSH 管理能力（通过自动生成的密钥对）
+- 正确的 Cloudflare API Token
+
+### 自动修复失败会怎样
+
+修复失败不会影响当前正在运行的 WireGuard 和 sing-box 服务。你可以通过 `journalctl -u wgstack-reconcile` 查看修复日志。`wgstack health --live` 也会检测自动修复定时器的状态和最近一次执行结果。
+
+**重试逻辑**：只有当所有目标域名的 DNS 更新全部成功时，新 IP 才会写入状态文件。如果有任何一个域名更新失败，状态文件不会更新——下次定时触发时会自动重试。
+
+**DNS 漂移修复**：即使入口 IP 没有变化，脚本每次运行时也会检查 Cloudflare 上每条 A 记录的 content、TTL 和 proxied 是否与配置一致。如果某条记录被手动改错、被删除、或 TTL/proxied 偏离期望，脚本会自动修复。这意味着 Cloudflare 上的入口业务域名会被持续校准到期望状态。
+
+**触发通知区分原因**：Telegram 通知会明确标注触发原因是「IP 变化」还是「DNS 漂移」（或两者同时），便于运维定位问题。出口 WireGuard 只在 IP 变化时重启，DNS 漂移修复不会触发 WG 重启。
+
+## 出口管理 DDNS
+
+### 这是什么
+
+如果出口节点使用动态公网 IP（如家宽），IP 变化后本地管理端会失去对出口节点的 SSH 连接能力。出口管理 DDNS 解决这个问题：**在出口节点上部署一个轻量更新器**，由出口节点自己检测公网 IP 变化，自动更新 Cloudflare 上的 SSH 管理域名。
+
+这样，无论出口 IP 如何变化，管理端始终可以通过 `ssh_host` 域名连上出口节点。
+
+### 出口管理域名 vs 入口业务域名
+
+| | 入口业务域名 | 出口管理域名 |
+|---|---|---|
+| 用途 | 客户端连接代理、访问面板、WG Endpoint | SSH 管理出口节点 |
+| 更新方式 | 由管理端 `wgstack reconcile` 更新 | 由出口节点自己更新 |
+| Cloudflare 代理 | 可以开启 | **必须 DNS only** |
+| 客户端使用 | 是 | 否 |
+| 示例 | `entry.example.com` | `ssh-exit.example.com` |
+
+### 如何启用
+
+**向导方式**：首次运行 `wgstack` 时，向导会询问出口 IP 是否可能变化。选择"是"后，可以启用 DDNS 并填写管理域名。
+
+**手动配置**：在 `wgstack.json` 中添加：
+
+```json
+"exit_ddns": {
+  "enabled": true,
+  "domain": "ssh-exit.example.com",
+  "interval_seconds": 300
+}
+```
+
+同时把出口节点的 `ssh_host` 设置为**完全相同的域名**：
+
+```json
+"nodes": {
+  "hk": {
+    "ssh_host": "ssh-exit.example.com",
+    ...
+  }
+}
+```
+
+**注意：** 启用出口管理 DDNS 时，`nodes.hk.ssh_host` 必须与 `exit_ddns.domain` 一致，否则配置校验会报错。这是为了确保 DDNS 维护的域名正是工具 SSH 连接使用的地址，避免"DDNS 在更新，但工具仍连错地址"的情况。向导路径会自动保持两者一致。
+
+### 部署了什么
+
+启用后，`wgstack apply` 会在出口节点上安装：
+
+| 文件 | 说明 |
+|------|------|
+| `/etc/wgstack/ddns.env` | DDNS 配置（Cloudflare token、域名、刷新间隔） |
+| `/usr/local/bin/wgstack-ddns` | 更新脚本（检测 IP → 更新 Cloudflare） |
+| `wgstack-ddns.service` | systemd oneshot 服务 |
+| `wgstack-ddns.timer` | systemd 定时器（默认每 5 分钟） |
+
+配置文件 `/etc/wgstack/ddns.env` 权限为 `0600`，其中包含 Cloudflare API token。
+
+### DDNS 更新失败会怎样
+
+更新失败不会影响 WireGuard 和 sing-box 的运行。你可以通过 `journalctl -u wgstack-ddns` 查看更新日志。`wgstack health --live` 也会检测 DDNS 定时器状态。
 
 ## 常见问题
 
@@ -304,6 +467,7 @@ wgstack apply         # 部署到服务器
 wgstack guide         # 查看面板操作说明
 wgstack health --live # 实时健康检查
 wgstack reconcile     # 同步 DNS
+wgstack self-update   # 更新到最新版本
 ```
 
 所有命令支持 `--config path` 指定配置文件。

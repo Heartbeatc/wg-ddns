@@ -90,6 +90,46 @@ func TestExpectedWithExitLocation(t *testing.T) {
 	t.Fatal("Expected to find 出口验证 check")
 }
 
+func TestParseSvcStatusSuccess(t *testing.T) {
+	output := "Result=success\nExecMainStatus=0\n"
+	result, exitCode := parseSvcStatus(output)
+	if result != "success" {
+		t.Fatalf("result = %q, want %q", result, "success")
+	}
+	if exitCode != "0" {
+		t.Fatalf("exitCode = %q, want %q", exitCode, "0")
+	}
+}
+
+func TestParseSvcStatusFailure(t *testing.T) {
+	output := "Result=exit-code\nExecMainStatus=1\n"
+	result, exitCode := parseSvcStatus(output)
+	if result != "exit-code" {
+		t.Fatalf("result = %q, want %q", result, "exit-code")
+	}
+	if exitCode != "1" {
+		t.Fatalf("exitCode = %q, want %q", exitCode, "1")
+	}
+}
+
+func TestParseSvcStatusEmpty(t *testing.T) {
+	result, exitCode := parseSvcStatus("")
+	if result != "" || exitCode != "" {
+		t.Fatalf("expected empty values, got result=%q exitCode=%q", result, exitCode)
+	}
+}
+
+func TestParseSvcStatusPartial(t *testing.T) {
+	output := "Result=exit-code\n"
+	result, exitCode := parseSvcStatus(output)
+	if result != "exit-code" {
+		t.Fatalf("result = %q, want %q", result, "exit-code")
+	}
+	if exitCode != "" {
+		t.Fatalf("exitCode = %q, want empty", exitCode)
+	}
+}
+
 func testProject(exitLocation string) model.Project {
 	return model.Project{
 		Project: "test",

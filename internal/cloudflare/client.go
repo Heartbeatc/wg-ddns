@@ -75,6 +75,12 @@ func New(cfg model.Cloudflare) (*Client, error) {
 	}, nil
 }
 
+// VerifyZone checks that the token is valid and the configured zone exists.
+func (c *Client) VerifyZone(ctx context.Context) error {
+	_, err := c.ensureZoneID(ctx)
+	return err
+}
+
 func (c *Client) EnsureDNSRecords(ctx context.Context, cfg model.Cloudflare, names []string, ip string, dryRun bool) ([]RecordChange, error) {
 	zoneID, err := c.ensureZoneID(ctx)
 	if err != nil {

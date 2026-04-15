@@ -12,7 +12,10 @@ import (
 	"wg-ddns/internal/model"
 )
 
-const DefaultPath = "wgstack.json"
+const (
+	DefaultPath = "wgstack.json"
+	DraftPath   = "wgstack.draft.json"
+)
 
 func DefaultProject() model.Project {
 	return model.Project{
@@ -87,6 +90,14 @@ func DefaultProject() model.Project {
 				BotTokenEnv: "TELEGRAM_BOT_TOKEN",
 			},
 		},
+		ExitDDNS: model.ExitDDNS{
+			Enabled:  false,
+			Interval: 300,
+		},
+		EntryAutoReconcile: model.AutoReconcile{
+			Enabled:  false,
+			Interval: 300,
+		},
 	}
 }
 
@@ -95,14 +106,9 @@ func Load(path string) (model.Project, error) {
 		path = DefaultPath
 	}
 
-	data, err := os.ReadFile(path)
+	project, err := loadRaw(path)
 	if err != nil {
 		return model.Project{}, err
-	}
-
-	var project model.Project
-	if err := json.Unmarshal(data, &project); err != nil {
-		return model.Project{}, fmt.Errorf("decode config: %w", err)
 	}
 
 	if err := Validate(project); err != nil {
@@ -121,16 +127,25 @@ func Save(path string, project model.Project) error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
+	return saveRaw(path, project)
+}
 
-	data, err := json.MarshalIndent(project, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode config: %w", err)
+// LoadDraft loads a partially-complete wizard draft without enforcing full
+// config validation.
+func LoadDraft(path string) (model.Project, error) {
+	if path == "" {
+		path = DraftPath
 	}
-	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	return loadRaw(path)
+}
+
+// SaveDraft writes a partially-complete wizard draft to disk without requiring
+// full config validation.
+func SaveDraft(path string, project model.Project) error {
+	if path == "" {
+		path = DraftPath
+	}
+	return saveRaw(path, project)
 }
 
 func Validate(project model.Project) error {
@@ -181,6 +196,29 @@ func Validate(project model.Project) error {
 	require("healthcheck.exit_check_url (必须返回纯文本公网 IP)", project.Checks.ExitCheckURL)
 	require("healthcheck.public_ip_check_url", project.Checks.PublicIPCheckURL)
 
+	if project.ExitDDNS.Enabled {
+		require("exit_ddns.domain", project.ExitDDNS.Domain)
+		if project.ExitDDNS.Interval < 60 {
+			missing = append(missing, "exit_ddns.interval_seconds (最小 60)")
+		}
+		if strings.TrimSpace(project.ExitDDNS.Domain) != "" {
+			sshHost := strings.TrimSpace(project.Nodes.HK.SSHHost)
+			if sshHost == "" {
+				missing = append(missing, "nodes.hk.ssh_host（启用出口管理 DDNS 时，ssh_host 必须设置为 exit_ddns.domain）")
+			} else if sshHost != strings.TrimSpace(project.ExitDDNS.Domain) {
+				missing = append(missing, fmt.Sprintf(
+					"nodes.hk.ssh_host 与 exit_ddns.domain 不一致（ssh_host=%q, domain=%q）——启用出口管理 DDNS 时两者必须相同",
+					sshHost, project.ExitDDNS.Domain))
+			}
+		}
+	}
+
+	if project.EntryAutoReconcile.Enabled {
+		if project.EntryAutoReconcile.Interval < 60 {
+			missing = append(missing, "entry_autoreconcile.interval_seconds (最小 60)")
+		}
+	}
+
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required fields: %s", strings.Join(missing, ", "))
 	}
@@ -189,6 +227,32 @@ func Validate(project model.Project) error {
 	}
 
 	return nil
+}
+
+func loadRaw(path string) (model.Project, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return model.Project{}, err
+	}
+
+	var project model.Project
+	if err := json.Unmarshal(data, &project); err != nil {
+		return model.Project{}, fmt.Errorf("decode config: %w", err)
+	}
+	return project, nil
+}
+
+func saveRaw(path string, project model.Project) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+
+	data, err := json.MarshalIndent(project, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
 }
 
 // ValidateDeploy checks that the project has all fields needed for actual

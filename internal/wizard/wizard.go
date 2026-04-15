@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"wg-ddns/internal/health"
-	"wg-ddns/internal/keygen"
 	"wg-ddns/internal/model"
 	"wg-ddns/internal/sshclient"
 )
@@ -40,223 +39,61 @@ type nodeInput struct {
 	keyPath    string
 }
 
-func RunSetup(w io.Writer) (model.Project, model.RunContext, bool, error) {
-	if !IsTerminal() {
-		return model.Project{}, model.RunContext{}, false, fmt.Errorf("部署向导需要在终端中运行。\n如需非交互模式，请使用: wgstack apply --config <配置文件>")
-	}
-
-	p := NewPrompter(w)
-
-	printWelcome(w)
-	fmt.Fprint(w, "\n按回车开始...")
-	p.WaitEnter()
-
-	// --- Step 1: Run location ---
-	fmt.Fprintln(w, "\n--- 第 1 步：运行位置 ---")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  本工具通过 SSH 远程配置目标节点。")
-	fmt.Fprintln(w, "  如果你正在某台目标节点上运行，可以跳过该节点的 SSH 配置。")
-	fmt.Fprintln(w)
-
-	runLocIdx := p.Select("你当前在哪台机器上运行 wgstack？", RunLocationOptions)
-
-	entryIsLocal := runLocIdx == 1
-	exitIsLocal := runLocIdx == 2
-
-	// --- Step 2: Entry node ---
-	fmt.Fprintln(w, "\n--- 第 2 步：入口节点 ---")
-	fmt.Fprintln(w)
-	entry := collectNodeInfo(w, p, "入口节点", entryIsLocal)
-
-	// --- Step 3: Exit node ---
-	fmt.Fprintln(w, "\n--- 第 3 步：出口节点 ---")
-	fmt.Fprintln(w)
-	exit := collectNodeInfo(w, p, "出口节点", exitIsLocal)
-
-	// --- Step 4: Cloudflare ---
-	fmt.Fprintln(w, "\n--- 第 4 步：Cloudflare ---")
-	fmt.Fprintln(w)
-
-	cfZone := p.LineWith("Cloudflare Zone 域名（你的主域名，如 example.com）", "", validateDomain)
-	cfToken := p.Password("Cloudflare API Token")
-
-	// --- Step 5: Domains ---
-	fmt.Fprintln(w, "\n--- 第 5 步：域名 ---")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  大多数情况下，面板访问和客户端连接代理使用同一个域名，")
-	fmt.Fprintln(w, "  只是通过不同端口分流（如 :面板端口 访问面板，:443 连接代理）。")
-	fmt.Fprintln(w)
-
-	entryDomain := p.LineWith("你的对外域名（面板和代理共用）", cfZone, validateDomain)
-
-	panelSeparate := p.Confirm("面板访问域名是否与此不同？", false)
-	var panelDomain string
-	if panelSeparate {
-		panelDomain = p.LineWith("面板域名", "panel."+cfZone, validateDomain)
-	} else {
-		panelDomain = entryDomain
-	}
-
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  WireGuard Endpoint 是出口节点连接入口节点时使用的域名。")
-	fmt.Fprintln(w, "  默认复用你的对外域名，不需要额外准备。")
-	fmt.Fprintln(w, "  如果单独配置，也应填写域名（本工具会将其纳入 DNS 同步）。")
-	wgSeparate := p.Confirm("WireGuard Endpoint 使用单独域名？", false)
-	var wgDomain string
-	if wgSeparate {
-		wgDomain = p.LineWith("WireGuard Endpoint 域名", "wg."+cfZone, validateDomain)
-	} else {
-		wgDomain = entryDomain
-	}
-
-	// --- Step 6: Panel + health ---
-	fmt.Fprintln(w, "\n--- 第 6 步：面板与检查 ---")
-	fmt.Fprintln(w)
-
-	outboundTag := p.Line("面板出站标签", "exit-socks")
-	routeUser := p.Line("专用线路用户标识", "exit-user@local")
-
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  出口地区代码用于健康检查时校验出口位置。")
-	fmt.Fprintln(w, "  例如 HK（香港）、JP（日本）、SG（新加坡）、US（美国）。")
-	fmt.Fprintln(w, "  留空则只测试连通性，不校验地区。")
-	exitLocation := p.OptionalLine("出口地区代码（留空跳过）")
-
-	if p.Err() != nil {
-		return model.Project{}, model.RunContext{}, false, p.Err()
-	}
-
-	// Generate WireGuard keys
-	fmt.Fprintln(w, "\n正在生成 WireGuard 密钥...")
-	entryKey, err := keygen.Generate()
-	if err != nil {
-		return model.Project{}, model.RunContext{}, false, err
-	}
-	exitKey, err := keygen.Generate()
-	if err != nil {
-		return model.Project{}, model.RunContext{}, false, err
-	}
-	fmt.Fprintln(w, "密钥已生成。")
-
-	project := model.Project{
-		Project: "entry-exit-link",
-		Cloudflare: model.Cloudflare{
-			Zone:       cfZone,
-			Token:      cfToken,
-			TokenEnv:   "CLOUDFLARE_API_TOKEN",
-			RecordType: "A",
-			TTL:        120,
-			Proxied:    false,
-		},
-		Domains: model.Domains{
-			Entry:     entryDomain,
-			Panel:     panelDomain,
-			WireGuard: wgDomain,
-		},
-		Nodes: model.Nodes{
-			US: model.Node{
-				Role:    "entry",
-				Host:    entry.host,
-				SSHHost: entry.sshHost,
-				SSH: model.SSH{
-					User:                  entry.user,
-					Port:                  22,
-					AuthMethod:            entry.authMethod,
-					Password:              entry.password,
-					PrivateKeyPath:        entry.keyPath,
-					InsecureIgnoreHostKey: true,
-				},
-				WGAddress:    "10.66.66.1/24",
-				WGPort:       51820,
-				WGPrivateKey: entryKey.PrivateKey,
-				WGPublicKey:  entryKey.PublicKey,
-				WGConfigPath: "/etc/wireguard/wg0.conf",
-				WGService:    "wg-quick@wg0",
-				Deploy: model.NodeDeploy{
-					AutoInstall: true,
-				},
-			},
-			HK: model.Node{
-				Role:    "exit",
-				Host:    exit.host,
-				SSHHost: exit.sshHost,
-				SSH: model.SSH{
-					User:                  exit.user,
-					Port:                  22,
-					AuthMethod:            exit.authMethod,
-					Password:              exit.password,
-					PrivateKeyPath:        exit.keyPath,
-					InsecureIgnoreHostKey: true,
-				},
-				WGAddress:       "10.66.66.2/24",
-				WGPrivateKey:    exitKey.PrivateKey,
-				WGPublicKey:     exitKey.PublicKey,
-				SocksListen:     "10.66.66.2:10808",
-				Proxy:           "sing-box",
-				WGConfigPath:    "/etc/wireguard/wg0.conf",
-				WGService:       "wg-quick@wg0",
-				ProxyConfigPath: "/etc/sing-box/config.json",
-				ProxyService:    "sing-box",
-				Deploy: model.NodeDeploy{
-					AutoInstall: true,
-				},
-			},
-		},
-		PanelGuide: model.PanelGuide{
-			OutboundTag: outboundTag,
-			RouteUser:   routeUser,
-		},
-		Checks: model.HealthCheck{
-			TestURL:          "https://ifconfig.me",
-			ExitCheckURL:     "https://api.ipify.org",
-			PublicIPCheckURL: "https://api.ipify.org",
-			ExitLocation:     exitLocation,
-		},
-	}
-
-	rc := model.RunContext{
-		EntryIsLocal: entryIsLocal,
-		ExitIsLocal:  exitIsLocal,
-	}
-
-	printSummary(w, project, rc)
-
-	shouldDeploy := p.Confirm("\n确认开始部署？", true)
-	if p.Err() != nil {
-		return model.Project{}, model.RunContext{}, false, p.Err()
-	}
-
-	return project, rc, shouldDeploy, nil
-}
-
 // collectNodeInfo gathers host/SSH info for one node.
 // When isLocal is true, SSH fields are skipped and the public IP is auto-detected.
 func collectNodeInfo(w io.Writer, p *Prompter, label string, isLocal bool) nodeInput {
+	return collectNodeInfoWithDefaults(w, p, label, isLocal, model.Node{})
+}
+
+// collectNodeInfoWithDefaults is like collectNodeInfo but pre-fills from prev when non-empty.
+func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal bool, prev model.Node) nodeInput {
 	if isLocal {
 		fmt.Fprintf(w, "  当前机器即%s，无需 SSH 配置。\n", label)
 		fmt.Fprintln(w, "  正在自动检测本机公网 IP...")
-		host := detectOrAskIP(w, p, label)
+		def := strings.TrimSpace(prev.Host)
+		host := detectOrAskIPWithDefault(w, p, label, def)
 		return nodeInput{host: host, user: "root"}
 	}
 
-	host := p.LineWith(label+"的公网 IP 地址", "", validateIP)
+	hostDef := strings.TrimSpace(prev.Host)
+	host := p.LineWith(label+"的公网 IP 地址", hostDef, validateIP)
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  SSH 连接地址用于本工具远程管理该节点。")
 	fmt.Fprintln(w, "  如果节点 IP 可能变化（如入口节点换 IP，或出口节点使用家宽动态 IP），")
 	fmt.Fprintln(w, "  推荐填写一个稳定的域名，这样即使 IP 漂移，工具仍能连上节点。")
 	fmt.Fprintln(w, "  如果 IP 不会变化，直接回车使用公网 IP 即可。")
+	if sh := strings.TrimSpace(prev.SSHHost); sh != "" {
+		fmt.Fprintf(w, "  当前 SSH 地址: %s\n", sh)
+	}
 	sshHost := p.OptionalLine("SSH 连接地址（域名或 IP，留空则使用公网 IP）")
 
-	user := p.Line("SSH 用户名", "root")
+	userDef := strings.TrimSpace(prev.SSH.User)
+	if userDef == "" {
+		userDef = "root"
+	}
+	user := p.LineWith("SSH 用户名", userDef, nil)
+
 	authIdx := p.Select("SSH 登录方式:", []string{"密码", "私钥文件"})
 
 	ni := nodeInput{host: host, sshHost: sshHost, user: user, authMethod: "password"}
 	if authIdx == 0 {
-		ni.password = p.Password("SSH 密码")
+		ni.authMethod = "password"
+		pw := p.PasswordOptional("SSH 密码")
+		if pw != "" {
+			ni.password = pw
+		} else if strings.TrimSpace(prev.SSH.Password) != "" {
+			ni.password = prev.SSH.Password
+		} else {
+			ni.password = p.Password("SSH 密码")
+		}
 	} else {
 		ni.authMethod = "private_key"
-		ni.keyPath = p.Line("私钥文件路径", "~/.ssh/id_rsa")
+		keyDef := strings.TrimSpace(prev.SSH.PrivateKeyPath)
+		if keyDef == "" {
+			keyDef = "~/.ssh/id_rsa"
+		}
+		ni.keyPath = p.LineWith("私钥文件路径", keyDef, nil)
 	}
 	return ni
 }
@@ -264,6 +101,11 @@ func collectNodeInfo(w io.Writer, p *Prompter, label string, isLocal bool) nodeI
 // detectOrAskIP tries to auto-detect the local machine's public IP.
 // On success it asks for confirmation; on failure it falls back to manual input.
 func detectOrAskIP(w io.Writer, p *Prompter, label string) string {
+	return detectOrAskIPWithDefault(w, p, label, "")
+}
+
+// detectOrAskIPWithDefault is like detectOrAskIP; if defaultIP is set it is offered as fallback default.
+func detectOrAskIPWithDefault(w io.Writer, p *Prompter, label, defaultIP string) string {
 	localClient := sshclient.NewLocal()
 	detectedIP, detectErr := health.DetectPublicIPv4(localClient, "https://api.ipify.org")
 	localClient.Close()
@@ -274,12 +116,20 @@ func detectOrAskIP(w io.Writer, p *Prompter, label string) string {
 		if p.Confirm("使用此 IP？", true) {
 			return detectedIP
 		}
-		return p.LineWith(label+"的公网 IP", "", validateIP)
+		def := defaultIP
+		if def == "" {
+			def = detectedIP
+		}
+		return p.LineWith(label+"的公网 IP", def, validateIP)
 	}
 
 	fmt.Fprintf(w, "  自动检测失败: %v\n", detectErr)
 	fmt.Fprintln(w)
-	return p.LineWith(label+"的公网 IP（请手动输入）", "", validateIP)
+	def := defaultIP
+	if def == "" {
+		def = ""
+	}
+	return p.LineWith(label+"的公网 IP（请手动输入）", def, validateIP)
 }
 
 func printWelcome(w io.Writer) {
@@ -301,6 +151,9 @@ func printWelcome(w io.Writer) {
 	fmt.Fprintln(w, "  • 目标节点的 SSH 登录信息（密码或私钥）")
 	fmt.Fprintln(w, "  • 一个 Cloudflare API Token（需要 DNS 编辑权限）")
 	fmt.Fprintln(w, "  • 一个对外域名（面板和代理入口通常共用）")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "接下来是「配置菜单」：可按任意顺序填写各项，随时返回修改，")
+	fmt.Fprintln(w, "确认无误后再保存或部署，无需一次性从头填到尾。")
 }
 
 func printSummary(w io.Writer, project model.Project, rc model.RunContext) {
@@ -341,11 +194,33 @@ func printSummary(w io.Writer, project model.Project, rc model.RunContext) {
 		fmt.Fprintln(w, "健康检查:     不校验出口地区")
 	}
 	fmt.Fprintln(w)
+	if project.ExitDDNS.Enabled {
+		fmt.Fprintln(w, "出口管理 DDNS:")
+		fmt.Fprintf(w, "  管理域名:    %s（DNS only）\n", project.ExitDDNS.Domain)
+		fmt.Fprintf(w, "  刷新间隔:    %ds\n", project.ExitDDNS.Interval)
+		fmt.Fprintln(w, "  出口节点会自动维护此域名指向当前公网 IP")
+		fmt.Fprintln(w)
+	}
+	if project.EntryAutoReconcile.Enabled {
+		fmt.Fprintln(w, "入口自动修复:")
+		fmt.Fprintf(w, "  刷新间隔:    %ds\n", project.EntryAutoReconcile.Interval)
+		fmt.Fprintln(w, "  入口 IP 变化后自动更新 DNS、刷新出口 WG、推送通知")
+		fmt.Fprintln(w)
+	}
+
 	fmt.Fprintln(w, "将要执行的操作：")
 	fmt.Fprintln(w, "  1. 在两台节点上安装 WireGuard（如果未安装）")
 	fmt.Fprintln(w, "  2. 在出口节点上安装 sing-box（如果未安装）")
 	fmt.Fprintln(w, "  3. 下发 WireGuard 和 sing-box 配置文件")
 	fmt.Fprintln(w, "  4. 启动/重启服务")
+	n := 5
+	if project.ExitDDNS.Enabled {
+		fmt.Fprintf(w, "  %d. 在出口节点部署管理 DDNS 更新器\n", n)
+		n++
+	}
+	if project.EntryAutoReconcile.Enabled {
+		fmt.Fprintf(w, "  %d. 在入口节点部署自动修复定时器\n", n)
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "配置将保存到: %s\n", "wgstack.json")
 }

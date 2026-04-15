@@ -18,6 +18,7 @@ import (
 	"wg-ddns/internal/planner"
 	"wg-ddns/internal/reconcile"
 	"wg-ddns/internal/render"
+	"wg-ddns/internal/selfupdate"
 	"wg-ddns/internal/wizard"
 )
 
@@ -43,6 +44,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return runHealth(args[1:], stdout)
 	case "reconcile":
 		return runReconcile(args[1:], stdout)
+	case "self-update":
+		return runSelfUpdate(args[1:], stdout)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -65,21 +68,34 @@ func runInteractive(stdout io.Writer) error {
 }
 
 func runSetupWizard(stdout io.Writer) error {
-	project, rc, shouldDeploy, err := wizard.RunSetup(stdout)
+	return runSetupWizardWithSeed(stdout, nil)
+}
+
+func runSetupWizardWithSeed(stdout io.Writer, seed *model.Project) error {
+	draft, err := loadSetupDraft(stdout, seed)
 	if err != nil {
 		return err
 	}
 
-	if err := config.Save(config.DefaultPath, project); err != nil {
-		return fmt.Errorf("保存配置失败: %w", err)
+	res, err := wizard.RunSetupMenu(stdout, draft)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(stdout, "\n配置已保存到 %s\n", config.DefaultPath)
 
-	if !shouldDeploy {
+	if res.Action == wizard.ActionCancel {
+		return nil
+	}
+	if res.Action == wizard.ActionSaveOnly {
 		fmt.Fprintln(stdout, "\n你可以稍后运行 wgstack apply 来部署。")
 		return nil
 	}
+	if res.Action != wizard.ActionDeploy {
+		return nil
+	}
+	// RunSetupMenu 已在确认部署时写入 wgstack.json
 
+	project := res.Project
+	rc := res.RC
 	notif := notify.FromConfig(project.Notifications, stdout)
 
 	fmt.Fprint(stdout, "\n--- 开始部署 ---\n\n")
@@ -100,7 +116,39 @@ func runSetupWizard(stdout io.Writer) error {
 	fmt.Fprintln(stdout, "  wgstack health --live     检查连通性")
 	fmt.Fprintln(stdout, "  wgstack reconcile         同步 DNS / 修复 IP 漂移")
 	fmt.Fprintln(stdout, "  wgstack apply             重新部署")
+	fmt.Fprintln(stdout, "  wgstack self-update       更新到最新版本")
 	return nil
+}
+
+func loadSetupDraft(stdout io.Writer, seed *model.Project) (*wizard.SetupDraft, error) {
+	if _, err := os.Stat(config.DraftPath); err == nil {
+		project, err := config.LoadDraft(config.DraftPath)
+		if err != nil {
+			return nil, fmt.Errorf("读取草稿失败 %s: %w", config.DraftPath, err)
+		}
+		fmt.Fprintf(stdout, "检测到未完成的配置草稿，已载入 %s。\n\n", config.DraftPath)
+		return wizard.NewSetupDraftFromProject(project)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("检查草稿文件失败 %s: %w", config.DraftPath, err)
+	}
+
+	if seed != nil {
+		fmt.Fprintf(stdout, "已载入当前配置 %s，可直接回改已有设置。\n\n", config.DefaultPath)
+		return wizard.NewSetupDraftFromProject(*seed)
+	}
+
+	if _, err := os.Stat(config.DefaultPath); err == nil {
+		project, err := config.Load(config.DefaultPath)
+		if err != nil {
+			return nil, fmt.Errorf("读取现有配置失败 %s: %w", config.DefaultPath, err)
+		}
+		fmt.Fprintf(stdout, "已载入当前配置 %s，可直接回改已有设置。\n\n", config.DefaultPath)
+		return wizard.NewSetupDraftFromProject(project)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("检查配置文件失败 %s: %w", config.DefaultPath, err)
+	}
+
+	return wizard.NewSetupDraft()
 }
 
 func runMenu(stdout io.Writer) error {
@@ -141,7 +189,7 @@ func runMenu(stdout io.Writer) error {
 
 	switch choice {
 	case 0:
-		return runSetupWizard(stdout)
+		return runSetupWizardWithSeed(stdout, &project)
 	case 1:
 		rc := wizard.AskRunContext(p)
 		if p.Err() != nil {
@@ -439,6 +487,16 @@ func loadProject(args []string) (model.Project, error) {
 	return config.Load(*path)
 }
 
+func runSelfUpdate(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("self-update", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	ref := fs.String("ref", selfupdate.DefaultRef, "git branch or tag to build from")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return selfupdate.Run(stdout, selfupdate.Options{Ref: *ref})
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "wgstack - 代理底层部署工具")
 	fmt.Fprintln(w)
@@ -454,6 +512,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  guide        查看面板操作说明")
 	fmt.Fprintln(w, "  health       运行健康检查")
 	fmt.Fprintln(w, "  reconcile    同步 DNS / 修复 IP 漂移")
+	fmt.Fprintln(w, "  self-update  更新 wgstack 到最新版本")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "节点本机运行时可用参数:")
 	fmt.Fprintln(w, "  --local-entry    当前机器即入口节点，跳过入口节点 SSH")

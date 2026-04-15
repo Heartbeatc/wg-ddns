@@ -76,5 +76,14 @@
       "bot_token_env": "TELEGRAM_BOT_TOKEN",
       "chat_id": ""
     }
+  },
+  "exit_ddns": {
+    "enabled": false,
+    "domain": "ssh-exit.example.com",
+    "interval_seconds": 300
+  },
+  "entry_autoreconcile": {
+    "enabled": false,
+    "interval_seconds": 300
   }
 }

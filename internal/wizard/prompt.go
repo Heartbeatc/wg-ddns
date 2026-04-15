@@ -86,6 +86,22 @@ func (p *Prompter) Password(prompt string) string {
 	}
 }
 
+// PasswordOptional reads a masked password; an empty input returns empty
+// string so callers can treat it as "keep existing value".
+func (p *Prompter) PasswordOptional(prompt string) string {
+	if p.err != nil {
+		return ""
+	}
+	fmt.Fprintf(p.writer, "%s（直接回车保留原值）: ", prompt)
+	password, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(p.writer)
+	if err != nil {
+		p.err = err
+		return ""
+	}
+	return strings.TrimSpace(string(password))
+}
+
 func (p *Prompter) Select(prompt string, options []string) int {
 	if p.err != nil {
 		return 0

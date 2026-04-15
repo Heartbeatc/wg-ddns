@@ -9,13 +9,33 @@ type RunContext struct {
 }
 
 type Project struct {
-	Project       string        `json:"project"`
-	Cloudflare    Cloudflare    `json:"cloudflare"`
-	Domains       Domains       `json:"domains"`
-	Nodes         Nodes         `json:"nodes"`
-	PanelGuide    PanelGuide    `json:"panel_guide"`
-	Checks        HealthCheck   `json:"healthcheck"`
-	Notifications Notifications `json:"notifications"`
+	Project            string        `json:"project"`
+	Cloudflare         Cloudflare    `json:"cloudflare"`
+	Domains            Domains       `json:"domains"`
+	Nodes              Nodes         `json:"nodes"`
+	PanelGuide         PanelGuide    `json:"panel_guide"`
+	Checks             HealthCheck   `json:"healthcheck"`
+	Notifications      Notifications `json:"notifications"`
+	ExitDDNS           ExitDDNS      `json:"exit_ddns,omitempty"`
+	EntryAutoReconcile AutoReconcile `json:"entry_autoreconcile,omitempty"`
+}
+
+// AutoReconcile configures a timer-based watcher deployed ON the entry node.
+// It periodically checks the entry node's public IP; on change it updates
+// Cloudflare DNS, restarts the exit node's WireGuard, and sends notifications.
+type AutoReconcile struct {
+	Enabled  bool `json:"enabled"`
+	Interval int  `json:"interval_seconds,omitempty"`
+}
+
+// ExitDDNS configures a lightweight DDNS updater deployed ON the exit node.
+// When the exit node has a dynamic public IP, this updater keeps its SSH
+// management domain pointing to the current IP, ensuring the management
+// machine can always reach the exit node.
+type ExitDDNS struct {
+	Enabled  bool   `json:"enabled"`
+	Domain   string `json:"domain,omitempty"`
+	Interval int    `json:"interval_seconds,omitempty"`
 }
 
 type Notifications struct {
