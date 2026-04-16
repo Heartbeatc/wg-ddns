@@ -158,21 +158,14 @@ func dialNodeForWizardVerify(w io.Writer, node model.Node, isLocal bool) (sshcli
 	if err == nil {
 		return client, nil
 	}
-	if node.SSHHost != "" && net.ParseIP(node.Host) != nil && looksLikeVerifyDNSFailure(err) {
-		fmt.Fprintln(w, "  SSH 管理域名尚未解析，先使用当前公网 IP 进行验证。")
+	if node.SSHHost != "" && net.ParseIP(node.Host) != nil {
+		fmt.Fprintf(w, "  SSH 管理域名暂不可用，先使用当前公网 IP %s 进行验证。\n", node.Host)
+		fmt.Fprintln(w, "  部署时会自动创建/更新该管理域名的 DNS 记录。")
 		temp := node
 		temp.SSHHost = ""
 		return sshclient.Dial(temp)
 	}
 	return nil, err
-}
-
-func looksLikeVerifyDNSFailure(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "no such host") ||
-		strings.Contains(msg, "server misbehaving") ||
-		strings.Contains(msg, "lookup ") ||
-		strings.Contains(msg, "name resolution")
 }
 
 func isManagedVerifyDomain(name string, project model.Project) bool {
