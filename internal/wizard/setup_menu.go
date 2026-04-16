@@ -199,7 +199,8 @@ func stepDomains(w io.Writer, p *Prompter, d *SetupDraft) {
 
 	fmt.Fprintln(w, helpStyle.Render("  默认只需要一个入口业务域名；面板、VLESS 和 WG 默认共用它。"))
 	fmt.Fprintln(w, helpStyle.Render("  首次部署时，wgstack 会自动在 Cloudflare 上创建/更新这些记录。"))
-	entryDef := strings.TrimSpace(d.Project.Domains.Entry)
+	previousEntryDomain := strings.TrimSpace(d.Project.Domains.Entry)
+	entryDef := previousEntryDomain
 	if entryDef == "" {
 		entryDef = cfZone
 	}
@@ -208,16 +209,23 @@ func stepDomains(w io.Writer, p *Prompter, d *SetupDraft) {
 		return
 	}
 
+	shouldSyncEntrySSH := shouldSyncEntrySSHHost(d.Project.Nodes.US.SSHHost, previousEntryDomain)
 	d.Project.Domains = model.Domains{
 		Entry:     entryDomain,
 		Panel:     entryDomain,
 		WireGuard: entryDomain,
 	}
-	if strings.TrimSpace(d.Project.Nodes.US.SSHHost) == "" || strings.TrimSpace(d.Project.Nodes.US.SSHHost) == strings.TrimSpace(d.Project.Domains.Entry) {
+	if shouldSyncEntrySSH {
 		d.Project.Nodes.US.SSHHost = entryDomain
 	}
 	fmt.Fprintln(w, helpStyle.Render("  面板、代理入口和 WG Endpoint 将默认复用这个域名。"))
 	fmt.Fprintln(w)
+}
+
+func shouldSyncEntrySSHHost(currentSSHHost, previousEntryDomain string) bool {
+	currentSSHHost = strings.TrimSpace(currentSSHHost)
+	previousEntryDomain = strings.TrimSpace(previousEntryDomain)
+	return currentSSHHost == "" || (previousEntryDomain != "" && currentSSHHost == previousEntryDomain)
 }
 
 func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {

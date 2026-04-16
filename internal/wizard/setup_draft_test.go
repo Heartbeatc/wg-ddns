@@ -48,3 +48,25 @@ func TestSetupDraftStatusCloudflare(t *testing.T) {
 		t.Fatalf("got %q", d.statusCloudflare())
 	}
 }
+
+func TestShouldSyncEntrySSHHost(t *testing.T) {
+	tests := []struct {
+		name     string
+		current  string
+		previous string
+		wantSync bool
+	}{
+		{name: "empty ssh host", current: "", previous: "b.hmcn.ai", wantSync: true},
+		{name: "matches previous entry", current: "b.hmcn.ai", previous: "b.hmcn.ai", wantSync: true},
+		{name: "custom ssh host", current: "ssh-entry.hmcn.ai", previous: "b.hmcn.ai", wantSync: false},
+		{name: "empty previous keeps custom", current: "ssh-entry.hmcn.ai", previous: "", wantSync: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldSyncEntrySSHHost(tt.current, tt.previous); got != tt.wantSync {
+				t.Fatalf("shouldSyncEntrySSHHost()=%v want %v", got, tt.wantSync)
+			}
+		})
+	}
+}
