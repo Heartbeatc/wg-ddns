@@ -48,6 +48,14 @@ release_tag_for_ref() {
   fi
 }
 
+display_ref() {
+  if [ "${REF}" = "main" ]; then
+    printf 'main/latest\n'
+  else
+    printf '%s\n' "${REF}"
+  fi
+}
+
 detect_platform() {
   local os arch
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -81,7 +89,7 @@ download_prebuilt() {
   asset="wgstack_${tag}_${os}_${arch}.tar.gz"
   url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag}/${asset}"
 
-  log "下载预编译二进制 ${REPO_OWNER}/${REPO_NAME}@${tag} (${os}/${arch})"
+  log "下载预编译二进制 ${REPO_OWNER}/${REPO_NAME}@$(display_ref) (${os}/${arch})"
   if ! curl -fsSL "${url}" -o "${TMP_DIR}/wgstack.tar.gz"; then
     return 1
   fi

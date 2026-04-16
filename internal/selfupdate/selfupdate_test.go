@@ -26,6 +26,23 @@ func TestReleaseTagForRef(t *testing.T) {
 	}
 }
 
+func TestDisplayRef(t *testing.T) {
+	tests := []struct {
+		ref  string
+		want string
+	}{
+		{"", "main/latest"},
+		{"main", "main/latest"},
+		{"v0.1.0", "v0.1.0"},
+		{"dev", "dev"},
+	}
+	for _, tt := range tests {
+		if got := displayRef(tt.ref); got != tt.want {
+			t.Fatalf("displayRef(%q)=%q want %q", tt.ref, got, tt.want)
+		}
+	}
+}
+
 func TestAssetName(t *testing.T) {
 	got := assetName("edge", "linux", "amd64")
 	if got != "wgstack_edge_linux_amd64.tar.gz" {

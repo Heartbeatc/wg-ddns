@@ -56,7 +56,7 @@ func Run(stdout io.Writer, opts Options) error {
 	}
 
 	fmt.Fprintf(stdout, "当前二进制: %s\n", targetPath)
-	fmt.Fprintf(stdout, "更新来源:   %s/%s@%s\n", opts.owner(), opts.repo(), opts.ref())
+	fmt.Fprintf(stdout, "更新来源:   %s/%s@%s\n", opts.owner(), opts.repo(), displayRef(opts.ref()))
 	fmt.Fprintln(stdout)
 
 	if err := checkWritable(targetPath); err != nil {
@@ -93,6 +93,13 @@ func Run(stdout io.Writer, opts Options) error {
 func releaseTagForRef(ref string) string {
 	if ref == "" || ref == DefaultRef {
 		return "edge"
+	}
+	return ref
+}
+
+func displayRef(ref string) string {
+	if ref == "" || ref == DefaultRef {
+		return "main/latest"
 	}
 	return ref
 }
@@ -134,7 +141,7 @@ func downloadPrebuilt(stdout io.Writer, opts Options, target string) error {
 	asset := assetName(tag, goos, arch)
 	url := releaseURL(opts.owner(), opts.repo(), tag, asset)
 
-	fmt.Fprintf(stdout, "下载预编译二进制: %s\n", asset)
+	fmt.Fprintf(stdout, "下载预编译二进制: %s/%s (%s/%s)\n", opts.repo(), displayRef(opts.ref()), goos, arch)
 	resp, err := releaseHTTPClient().Get(url)
 	if err != nil {
 		return fmt.Errorf("下载失败: %w", err)
