@@ -95,6 +95,8 @@ wgstack apply --local-exit     # 在出口节点本机运行
 bash <(curl -Ls https://raw.githubusercontent.com/Heartbeatc/wg-ddns/main/scripts/install.sh)
 ```
 
+安装脚本会优先下载当前平台的**预编译二进制**，不要求目标机器预装 Go。默认安装 `main` 分支对应的 `edge` 预发布包。
+
 ## 更新 wgstack
 
 已安装过的用户，直接运行：
@@ -103,13 +105,16 @@ bash <(curl -Ls https://raw.githubusercontent.com/Heartbeatc/wg-ddns/main/script
 wgstack self-update
 ```
 
-程序会自动下载最新代码、编译并替换当前二进制。需要本机已安装 Go 编译器。
+程序会优先下载当前平台的**预编译二进制**并替换当前文件，不要求本机已安装 Go。
 
 如果需要更新到指定分支或标签：
 
 ```bash
 wgstack self-update --ref main
 ```
+
+- `--ref main` 会拉取 `edge` 预发布包
+- `--ref v0.1.0` 会拉取对应 tag 的正式 release 包
 
 如果当前安装路径需要 root 权限（如 `/usr/local/bin`），请使用 `sudo wgstack self-update`。
 

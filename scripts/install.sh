@@ -5,8 +5,8 @@ REPO_OWNER="${WGDDNS_REPO_OWNER:-Heartbeatc}"
 REPO_NAME="${WGDDNS_REPO_NAME:-wg-ddns}"
 REF="${WGDDNS_REF:-main}"
 INSTALL_DIR="${WGDDNS_INSTALL_DIR:-}"
+ALLOW_SOURCE_BUILD="${WGDDNS_ALLOW_SOURCE_BUILD:-0}"
 TMP_DIR="$(mktemp -d)"
-ARCHIVE_URL="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REF}"
 
 cleanup() {
   rm -rf "${TMP_DIR}"
@@ -40,53 +40,62 @@ detect_install_dir() {
   printf '%s/.local/bin\n' "${HOME}"
 }
 
-install_go() {
-  log 'Go 未安装，尝试自动安装'
-
-  if need_cmd apt-get; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y golang-go curl tar
-    return
+release_tag_for_ref() {
+  if [ "${REF}" = "main" ]; then
+    printf 'edge\n'
+  else
+    printf '%s\n' "${REF}"
   fi
-
-  if need_cmd dnf; then
-    dnf install -y golang curl tar
-    return
-  fi
-
-  if need_cmd yum; then
-    yum install -y golang curl tar
-    return
-  fi
-
-  if need_cmd apk; then
-    apk add --no-cache go curl tar
-    return
-  fi
-
-  if need_cmd brew; then
-    brew install go
-    return
-  fi
-
-  fail '未找到可用的包管理器来安装 Go，请先手动安装 Go 1.19+ 后重试'
 }
 
-ensure_requirements() {
+detect_platform() {
+  local os arch
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+
+  case "${os}" in
+    linux|darwin) ;;
+    *)
+      fail "暂不支持的平台: ${os}"
+      ;;
+  esac
+
+  case "${arch}" in
+    x86_64|amd64) arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *)
+      fail "暂不支持的架构: ${arch}"
+      ;;
+  esac
+
+  printf '%s %s\n' "${os}" "${arch}"
+}
+
+download_prebuilt() {
   need_cmd curl || fail '需要 curl'
   need_cmd tar || fail '需要 tar'
 
-  if ! need_cmd go; then
-    install_go
+  local os arch tag asset url
+  read -r os arch <<<"$(detect_platform)"
+  tag="$(release_tag_for_ref)"
+  asset="wgstack_${tag}_${os}_${arch}.tar.gz"
+  url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag}/${asset}"
+
+  log "下载预编译二进制 ${REPO_OWNER}/${REPO_NAME}@${tag} (${os}/${arch})"
+  if ! curl -fsSL "${url}" -o "${TMP_DIR}/wgstack.tar.gz"; then
+    return 1
   fi
 
-  need_cmd go || fail 'Go 安装失败，请手动安装 Go 1.19+'
+  tar -xzf "${TMP_DIR}/wgstack.tar.gz" -C "${TMP_DIR}"
+  [ -f "${TMP_DIR}/wgstack" ] || fail '压缩包中未找到 wgstack'
+  chmod 0755 "${TMP_DIR}/wgstack"
 }
 
 download_source() {
+  local archive_url
+  archive_url="https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REF}"
   log "下载源码 ${REPO_OWNER}/${REPO_NAME}@${REF}"
-  curl -fsSL "${ARCHIVE_URL}" -o "${TMP_DIR}/src.tar.gz"
+  curl -fsSL "${archive_url}" -o "${TMP_DIR}/src.tar.gz"
   tar -xzf "${TMP_DIR}/src.tar.gz" -C "${TMP_DIR}"
 }
 
@@ -95,11 +104,27 @@ build_binary() {
   src_dir="$(find "${TMP_DIR}" -maxdepth 1 -type d -name "${REPO_NAME}-*" | head -n 1)"
   [ -n "${src_dir}" ] || fail '解压源码失败'
 
-  log '编译 wgstack'
+  need_cmd go || fail '预编译二进制不可用，且本机未安装 Go；请稍后重试或使用已发布 Release'
+  log '回退到源码编译'
   (
     cd "${src_dir}"
     GO111MODULE=on go build -o "${TMP_DIR}/wgstack" ./cmd/wgstack
   )
+}
+
+prepare_binary() {
+  if download_prebuilt; then
+    return
+  fi
+
+  if [ "${ALLOW_SOURCE_BUILD}" != "1" ]; then
+    fail '未找到当前平台的预编译二进制。请稍后重试，或设置 WGDDNS_ALLOW_SOURCE_BUILD=1 允许源码编译'
+  fi
+
+  need_cmd curl || fail '需要 curl'
+  need_cmd tar || fail '需要 tar'
+  download_source
+  build_binary
 }
 
 install_binary() {
@@ -124,9 +149,7 @@ install_binary() {
 }
 
 main() {
-  ensure_requirements
-  download_source
-  build_binary
+  prepare_binary
   install_binary
   log '安装完成！'
   log '运行 wgstack 开始部署向导。'

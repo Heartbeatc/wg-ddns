@@ -1,13 +1,17 @@
 package selfupdate
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
@@ -43,7 +47,8 @@ func (o Options) ref() string {
 	return DefaultRef
 }
 
-// Run downloads the latest source, compiles it, and replaces the running binary.
+// Run downloads a prebuilt binary for the current platform and replaces the running binary.
+// If no matching binary release exists and Go is installed locally, it falls back to source build.
 func Run(stdout io.Writer, opts Options) error {
 	targetPath, err := detectTargetPath()
 	if err != nil {
@@ -58,18 +63,99 @@ func Run(stdout io.Writer, opts Options) error {
 		return err
 	}
 
-	requireCmd("curl")
-	requireCmd("tar")
-	if err := requireCmd("go"); err != nil {
-		return fmt.Errorf("需要 Go 编译器（%v）\n如果在服务器上，可使用安装脚本: bash <(curl -Ls https://raw.githubusercontent.com/%s/%s/%s/scripts/install.sh)",
-			err, opts.owner(), opts.repo(), opts.ref())
-	}
-
 	tmpDir, err := os.MkdirTemp("", "wgstack-update-*")
 	if err != nil {
 		return fmt.Errorf("创建临时目录失败: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
+
+	newBinary := filepath.Join(tmpDir, "wgstack")
+	if err := downloadPrebuilt(stdout, opts, newBinary); err != nil {
+		fmt.Fprintf(stdout, "预编译二进制不可用：%v\n", err)
+		if requireCmd("go") != nil {
+			return fmt.Errorf("当前平台没有可用的预编译二进制，且本机未安装 Go；请稍后重试或使用已发布的 Release")
+		}
+		fmt.Fprintln(stdout, "回退到源码编译...")
+		if err := buildFromSource(stdout, opts, tmpDir, newBinary); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintln(stdout, "替换二进制...")
+	if err := replaceBinary(targetPath, newBinary); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(stdout, "\n更新完成: %s\n", targetPath)
+	return nil
+}
+
+func releaseTagForRef(ref string) string {
+	if ref == "" || ref == DefaultRef {
+		return "edge"
+	}
+	return ref
+}
+
+func normalizedPlatform() (string, string, error) {
+	var goos string
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		goos = runtime.GOOS
+	default:
+		return "", "", fmt.Errorf("暂不支持的平台: %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	var arch string
+	switch runtime.GOARCH {
+	case "amd64", "arm64":
+		arch = runtime.GOARCH
+	default:
+		return "", "", fmt.Errorf("暂不支持的架构: %s", runtime.GOARCH)
+	}
+	return goos, arch, nil
+}
+
+func assetName(tag, goos, arch string) string {
+	return fmt.Sprintf("wgstack_%s_%s_%s.tar.gz", tag, goos, arch)
+}
+
+func releaseURL(owner, repo, tag, asset string) string {
+	return fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", owner, repo, tag, asset)
+}
+
+func downloadPrebuilt(stdout io.Writer, opts Options, target string) error {
+	goos, arch, err := normalizedPlatform()
+	if err != nil {
+		return err
+	}
+
+	tag := releaseTagForRef(opts.ref())
+	asset := assetName(tag, goos, arch)
+	url := releaseURL(opts.owner(), opts.repo(), tag, asset)
+
+	fmt.Fprintf(stdout, "下载预编译二进制: %s\n", asset)
+	resp, err := releaseHTTPClient().Get(url)
+	if err != nil {
+		return fmt.Errorf("下载失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载失败: HTTP %d", resp.StatusCode)
+	}
+
+	if err := extractBinaryTarGz(resp.Body, "wgstack", target); err != nil {
+		return fmt.Errorf("解压二进制失败: %w", err)
+	}
+	if err := os.Chmod(target, 0o755); err != nil {
+		return fmt.Errorf("设置二进制权限失败: %w", err)
+	}
+	return nil
+}
+
+func buildFromSource(stdout io.Writer, opts Options, tmpDir, newBinary string) error {
+	requireCmd("curl")
+	requireCmd("tar")
 
 	archiveURL := fmt.Sprintf("https://codeload.github.com/%s/%s/tar.gz/refs/heads/%s",
 		opts.owner(), opts.repo(), opts.ref())
@@ -89,7 +175,6 @@ func Run(stdout io.Writer, opts Options) error {
 	}
 
 	fmt.Fprintln(stdout, "编译 wgstack...")
-	newBinary := filepath.Join(tmpDir, "wgstack")
 	buildCmd := exec.Command("go", "build", "-o", newBinary, "./cmd/wgstack")
 	buildCmd.Dir = srcDir
 	buildCmd.Env = append(os.Environ(), "GO111MODULE=on", "GOOS="+runtime.GOOS, "GOARCH="+runtime.GOARCH)
@@ -98,14 +183,49 @@ func Run(stdout io.Writer, opts Options) error {
 	if err := buildCmd.Run(); err != nil {
 		return fmt.Errorf("编译失败: %w", err)
 	}
+	return nil
+}
 
-	fmt.Fprintln(stdout, "替换二进制...")
-	if err := replaceBinary(targetPath, newBinary); err != nil {
+func releaseHTTPClient() *http.Client {
+	return &http.Client{Timeout: 30 * time.Second}
+}
+
+func extractBinaryTarGz(r io.Reader, binaryName, target string) error {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
 		return err
 	}
+	defer gz.Close()
 
-	fmt.Fprintf(stdout, "\n更新完成: %s\n", targetPath)
-	return nil
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if filepath.Base(hdr.Name) != binaryName {
+			continue
+		}
+		f, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(f, tr); err != nil {
+			f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+		return nil
+	}
+	return fmt.Errorf("压缩包中未找到 %s", binaryName)
 }
 
 func detectTargetPath() (string, error) {
@@ -165,7 +285,7 @@ func replaceBinary(target, newBinary string) error {
 		info = nil
 	}
 
-	mode := os.FileMode(0755)
+	mode := os.FileMode(0o755)
 	if info != nil {
 		mode = info.Mode()
 	}
@@ -175,7 +295,6 @@ func replaceBinary(target, newBinary string) error {
 		return fmt.Errorf("读取新二进制失败: %w", err)
 	}
 
-	// Atomic replace: write to temp file in same dir, then rename.
 	tmpTarget := target + ".new"
 	if err := os.WriteFile(tmpTarget, newData, mode); err != nil {
 		return fmt.Errorf("写入失败（权限不足？尝试 sudo）: %w", err)
