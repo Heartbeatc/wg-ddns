@@ -3,6 +3,7 @@ package deploy
 import (
 	"fmt"
 	"io"
+	"net"
 	"strings"
 
 	"wg-ddns/internal/config"
@@ -69,6 +70,9 @@ func Apply(project model.Project, stdout io.Writer, activate bool, rc model.RunC
 	if err := config.ValidateDeploy(project, rc); err != nil {
 		return err
 	}
+	if err := ensureManagedDNS(stdout, project); err != nil {
+		return err
+	}
 
 	files, err := BuildFiles(project)
 	if err != nil {
@@ -108,9 +112,9 @@ func deployNode(stdout io.Writer, entry nodeEntry, files []RemoteFile, activate 
 		fmt.Fprintf(stdout, "连接 %s (%s)\n", entry.label, entry.node.SSHAddr())
 	}
 
-	client, err := sshclient.DialOrLocal(entry.node, entry.isLocal)
+	client, actualAddr, err := dialNodeForDeploy(stdout, entry.label, entry.node, entry.isLocal)
 	if err != nil {
-		return fmt.Errorf("无法连接 %s (%s): %w", entry.label, entry.node.SSHAddr(), err)
+		return fmt.Errorf("无法连接 %s (%s): %w", entry.label, actualAddr, err)
 	}
 	defer client.Close()
 
@@ -133,6 +137,38 @@ func deployNode(stdout io.Writer, entry nodeEntry, files []RemoteFile, activate 
 	}
 
 	return nil
+}
+
+func dialNodeForDeploy(stdout io.Writer, label string, node model.Node, isLocal bool) (sshclient.Runner, string, error) {
+	if isLocal {
+		r, err := sshclient.DialOrLocal(node, true)
+		return r, "local", err
+	}
+
+	client, err := sshclient.Dial(node)
+	if err == nil {
+		return client, node.SSHAddr(), nil
+	}
+
+	if node.SSHHost != "" && net.ParseIP(node.Host) != nil && looksLikeDNSFailure(err) {
+		fmt.Fprintf(stdout, "  %s 的 SSH 域名暂未生效，先使用当前公网 IP %s 继续部署\n", label, node.Host)
+		temp := node
+		temp.SSHHost = ""
+		client2, err2 := sshclient.Dial(temp)
+		if err2 == nil {
+			return client2, temp.Host, nil
+		}
+	}
+
+	return nil, node.SSHAddr(), err
+}
+
+func looksLikeDNSFailure(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "server misbehaving") ||
+		strings.Contains(msg, "lookup ") ||
+		strings.Contains(msg, "name resolution")
 }
 
 func prepareNode(stdout io.Writer, client sshclient.Runner, nodeKey string, node model.Node) error {

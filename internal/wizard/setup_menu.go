@@ -73,7 +73,7 @@ func runGuidedSetup(w io.Writer, p *Prompter, draft *SetupDraft) {
 		return
 	}
 
-	printProgressHeader(w, 5, 6, "域名", "默认只问一个入口业务域名；面板和 WG 默认共用。")
+	printProgressHeader(w, 5, 6, "域名", "默认只问一个入口业务域名；首次部署时会自动创建/更新 DNS。")
 	stepDomains(w, p, draft)
 	if p.Err() != nil {
 		return
@@ -197,6 +197,7 @@ func stepDomains(w io.Writer, p *Prompter, d *SetupDraft) {
 	}
 
 	fmt.Fprintln(w, helpStyle.Render("  默认只需要一个入口业务域名；面板、VLESS 和 WG 默认共用它。"))
+	fmt.Fprintln(w, helpStyle.Render("  首次部署时，wgstack 会自动在 Cloudflare 上创建/更新这些记录。"))
 	entryDef := strings.TrimSpace(d.Project.Domains.Entry)
 	if entryDef == "" {
 		entryDef = cfZone
@@ -217,6 +218,7 @@ func stepDomains(w io.Writer, p *Prompter, d *SetupDraft) {
 func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
 	fmt.Fprintln(w, renderSectionTitle("出口管理 DDNS"))
 	fmt.Fprintln(w, helpStyle.Render("  仅在出口公网 IP 可能变化时启用；用于维护出口 SSH 管理域名。"))
+	fmt.Fprintln(w, helpStyle.Render("  首次部署时，wgstack 也会自动创建这个管理域名的 DNS 记录。"))
 	d.ExitDDNSTouched = true
 
 	cfZone := strings.TrimSpace(d.Project.Cloudflare.Zone)

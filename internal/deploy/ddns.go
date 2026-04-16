@@ -6,7 +6,6 @@ import (
 
 	"wg-ddns/internal/cloudflare"
 	"wg-ddns/internal/model"
-	"wg-ddns/internal/sshclient"
 )
 
 const ddnsScript = `#!/bin/sh
@@ -142,7 +141,7 @@ func DeployExitDDNS(stdout io.Writer, project model.Project, rc model.RunContext
 	fmt.Fprintf(stdout, "  管理域名: %s\n", project.ExitDDNS.Domain)
 	fmt.Fprintf(stdout, "  刷新间隔: %ds\n", project.ExitDDNS.Interval)
 
-	client, err := sshclient.DialOrLocal(project.Nodes.HK, rc.ExitIsLocal)
+	client, _, err := dialNodeForDeploy(stdout, "出口节点", project.Nodes.HK, rc.ExitIsLocal)
 	if err != nil {
 		return fmt.Errorf("出口 DDNS: 无法连接出口节点: %w", err)
 	}

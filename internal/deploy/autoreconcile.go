@@ -8,7 +8,6 @@ import (
 
 	"wg-ddns/internal/cloudflare"
 	"wg-ddns/internal/model"
-	"wg-ddns/internal/sshclient"
 )
 
 const reconcileScript = `#!/bin/sh
@@ -365,7 +364,7 @@ func DeployEntryAutoReconcile(stdout io.Writer, project model.Project, rc model.
 	tgToken := resolveTelegramToken(project)
 
 	// --- Connect to entry node ---
-	entryClient, err := sshclient.DialOrLocal(project.Nodes.US, rc.EntryIsLocal)
+	entryClient, _, err := dialNodeForDeploy(stdout, "入口节点", project.Nodes.US, rc.EntryIsLocal)
 	if err != nil {
 		return fmt.Errorf("入口自动修复: 无法连接入口节点: %w", err)
 	}
@@ -390,7 +389,7 @@ chmod 600 /etc/wgstack/exit_key`
 
 	// --- Deploy public key to exit node ---
 	fmt.Fprintln(stdout, "  授权公钥到出口节点")
-	exitClient, err := sshclient.DialOrLocal(project.Nodes.HK, rc.ExitIsLocal)
+	exitClient, _, err := dialNodeForDeploy(stdout, "出口节点", project.Nodes.HK, rc.ExitIsLocal)
 	if err != nil {
 		return fmt.Errorf("入口自动修复: 无法连接出口节点: %w", err)
 	}

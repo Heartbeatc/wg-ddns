@@ -18,7 +18,7 @@ func VerifyEntrySSH(w io.Writer, project model.Project, rc model.RunContext) err
 	if err := config.ValidateDeploy(project, rc); err != nil {
 		return fmt.Errorf("配置不完整，无法验证: %w", err)
 	}
-	client, err := sshclient.DialOrLocal(project.Nodes.US, rc.EntryIsLocal)
+	client, err := dialNodeForWizardVerify(w, project.Nodes.US, rc.EntryIsLocal)
 	if err != nil {
 		return fmt.Errorf("连接失败: %w", err)
 	}
@@ -46,7 +46,7 @@ func VerifyExitSSH(w io.Writer, project model.Project, rc model.RunContext) erro
 	if err := config.ValidateDeploy(project, rc); err != nil {
 		return fmt.Errorf("配置不完整，无法验证: %w", err)
 	}
-	client, err := sshclient.DialOrLocal(project.Nodes.HK, rc.ExitIsLocal)
+	client, err := dialNodeForWizardVerify(w, project.Nodes.HK, rc.ExitIsLocal)
 	if err != nil {
 		return fmt.Errorf("连接失败: %w", err)
 	}
@@ -107,7 +107,11 @@ func VerifyDomains(w io.Writer, project model.Project) error {
 	for _, name := range names {
 		ips, err := net.LookupIP(name)
 		if err != nil {
-			lines = append(lines, fmt.Sprintf("%s: 解析失败 — %v", name, err))
+			if isManagedVerifyDomain(name, project) {
+				lines = append(lines, fmt.Sprintf("%s: 暂未解析（部署时会自动创建/更新）", name))
+			} else {
+				lines = append(lines, fmt.Sprintf("%s: 解析失败 — %v", name, err))
+			}
 			continue
 		}
 		var v4s []string
@@ -144,6 +148,40 @@ func VerifyDomains(w io.Writer, project model.Project) error {
 	}
 	fmt.Fprintln(w, "  （是否在 Cloudflare 上为「仅 DNS」需登录控制台确认。）")
 	return nil
+}
+
+func dialNodeForWizardVerify(w io.Writer, node model.Node, isLocal bool) (sshclient.Runner, error) {
+	if isLocal {
+		return sshclient.DialOrLocal(node, true)
+	}
+	client, err := sshclient.Dial(node)
+	if err == nil {
+		return client, nil
+	}
+	if node.SSHHost != "" && net.ParseIP(node.Host) != nil && looksLikeVerifyDNSFailure(err) {
+		fmt.Fprintln(w, "  SSH 管理域名尚未解析，先使用当前公网 IP 进行验证。")
+		temp := node
+		temp.SSHHost = ""
+		return sshclient.Dial(temp)
+	}
+	return nil, err
+}
+
+func looksLikeVerifyDNSFailure(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "server misbehaving") ||
+		strings.Contains(msg, "lookup ") ||
+		strings.Contains(msg, "name resolution")
+}
+
+func isManagedVerifyDomain(name string, project model.Project) bool {
+	zone := strings.ToLower(strings.TrimSpace(project.Cloudflare.Zone))
+	name = strings.ToLower(strings.TrimSpace(name))
+	if zone == "" || name == "" {
+		return false
+	}
+	return name == zone || strings.HasSuffix(name, "."+zone)
 }
 
 func runVerifySubmenu(w io.Writer, p *Prompter, d *SetupDraft) {
