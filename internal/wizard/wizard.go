@@ -102,7 +102,7 @@ func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal
 }
 
 // detectOrAskIP tries to auto-detect the local machine's public IP.
-// On success it asks for confirmation; on failure it falls back to manual input.
+// On success it uses the detected value directly; on failure it falls back to manual input.
 func detectOrAskIP(w io.Writer, p *Prompter, label string) string {
 	return detectOrAskIPWithDefault(w, p, label, "")
 }
@@ -120,15 +120,9 @@ func detectOrAskIPWithDefault(w io.Writer, p *Prompter, label, defaultIP string)
 		} else {
 			fmt.Fprintln(w, helpStyle.Render("  这里只确认当前公网 IP；SSH 管理域名会在后续步骤继续配置。"))
 		}
+		fmt.Fprintln(w, helpStyle.Render("  已自动采用该公网 IP。"))
 		fmt.Fprintln(w)
-		if p.Confirm("确认使用这个公网 IP 作为该节点当前地址？", true) {
-			return detectedIP
-		}
-		def := defaultIP
-		if def == "" {
-			def = detectedIP
-		}
-		return p.LineWith(label+"当前公网 IP（域名稍后设置）", def, validateIP)
+		return detectedIP
 	}
 
 	fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  自动检测失败: "+detectErr.Error()))
@@ -163,15 +157,9 @@ func detectOrAskRemoteIP(w io.Writer, p *Prompter, label string, ni nodeInput, d
 		if detectErr == nil {
 			fmt.Fprintf(w, "%s\n", successTextStyle.Render("  通过 SSH 检测到当前公网 IP: "+detectedIP))
 			fmt.Fprintln(w, helpStyle.Render("  该 IP 仅用于 DDNS、健康检查和部署摘要；业务域名会在后面的域名步骤设置。"))
+			fmt.Fprintln(w, helpStyle.Render("  已自动采用该公网 IP。"))
 			fmt.Fprintln(w)
-			if p.Confirm("确认使用这个公网 IP 作为该节点当前地址？", true) {
-				return detectedIP
-			}
-			def := defaultIP
-			if def == "" {
-				def = detectedIP
-			}
-			return p.LineWith(label+"当前公网 IP（用于 DDNS / 健康检查）", def, validateIP)
+			return detectedIP
 		}
 		fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  已连上节点，但自动检测公网 IP 失败: "+detectErr.Error()))
 	} else {
