@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"wg-ddns/internal/config"
@@ -249,9 +250,13 @@ func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
 	if p.Err() != nil {
 		return
 	}
-	d.Project.ExitDDNS = model.ExitDDNS{Enabled: true, Domain: dd, Interval: 60}
+	interval := promptIntervalSeconds(p, "出口 DDNS 检查间隔秒数", d.Project.ExitDDNS.Interval)
+	if p.Err() != nil {
+		return
+	}
+	d.Project.ExitDDNS = model.ExitDDNS{Enabled: true, Domain: dd, Interval: interval}
 	d.Project.Nodes.HK.SSHHost = dd
-	fmt.Fprintln(w, helpStyle.Render("  已启用出口管理 DDNS，并将出口 SSH 管理域名设为该地址。"))
+	fmt.Fprintf(w, "%s\n", helpStyle.Render(fmt.Sprintf("  已启用出口管理 DDNS，检查间隔 %ds，并将出口 SSH 管理域名设为该地址。", interval)))
 	fmt.Fprintln(w)
 }
 
@@ -259,9 +264,39 @@ func stepEntryAuto(w io.Writer, p *Prompter, d *SetupDraft) {
 	fmt.Fprintln(w, renderSectionTitle("入口自动修复"))
 	fmt.Fprintln(w, helpStyle.Render("  默认启用。入口节点会定时检查 IP / DNS 漂移，并在需要时自动修复。"))
 	d.EntryAutoTouched = true
-	d.Project.EntryAutoReconcile = model.AutoReconcile{Enabled: true, Interval: 60}
-	fmt.Fprintln(w, helpStyle.Render("  已启用入口自动修复，检查间隔 60s。"))
+	interval := promptIntervalSeconds(p, "入口自动修复检查间隔秒数", d.Project.EntryAutoReconcile.Interval)
+	if p.Err() != nil {
+		return
+	}
+	d.Project.EntryAutoReconcile = model.AutoReconcile{Enabled: true, Interval: interval}
+	fmt.Fprintf(w, "%s\n", helpStyle.Render(fmt.Sprintf("  已启用入口自动修复，检查间隔 %ds。", interval)))
 	fmt.Fprintln(w)
+}
+
+func promptIntervalSeconds(p *Prompter, prompt string, current int) int {
+	if current < 60 {
+		current = 60
+	}
+	val := p.LineWith(prompt, strconv.Itoa(current), validateIntervalSeconds)
+	if p.Err() != nil {
+		return current
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		return current
+	}
+	return n
+}
+
+func validateIntervalSeconds(v string) string {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return "请输入数字，例如 60"
+	}
+	if n < 60 {
+		return "检查间隔不能小于 60 秒"
+	}
+	return ""
 }
 
 func domainDefault(current, fallback string) string {

@@ -70,3 +70,25 @@ func TestShouldSyncEntrySSHHost(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateIntervalSeconds(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "minimum", value: "60"},
+		{name: "larger", value: "300"},
+		{name: "too small", value: "30", wantErr: true},
+		{name: "not number", value: "abc", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := validateIntervalSeconds(tt.value)
+			if (got != "") != tt.wantErr {
+				t.Fatalf("validateIntervalSeconds(%q)=%q, wantErr=%v", tt.value, got, tt.wantErr)
+			}
+		})
+	}
+}
