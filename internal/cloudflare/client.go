@@ -128,6 +128,37 @@ func (c *Client) EnsureDNSRecords(ctx context.Context, cfg model.Cloudflare, nam
 	return changes, nil
 }
 
+func (c *Client) VerifyDNSRecords(ctx context.Context, cfg model.Cloudflare, expected map[string]string) ([]string, error) {
+	zoneID, err := c.ensureZoneID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var pending []string
+	for name, ip := range expected {
+		record, err := c.getDNSRecord(ctx, zoneID, cfg.RecordType, name)
+		if err != nil {
+			return nil, err
+		}
+		if record == nil {
+			pending = append(pending, fmt.Sprintf("%s 记录不存在", name))
+			continue
+		}
+		if record.Content != ip {
+			pending = append(pending, fmt.Sprintf("%s 当前为 %s，期望 %s", name, record.Content, ip))
+			continue
+		}
+		if record.TTL != cfg.TTL {
+			pending = append(pending, fmt.Sprintf("%s TTL 当前为 %d，期望 %d", name, record.TTL, cfg.TTL))
+			continue
+		}
+		if record.Proxied != cfg.Proxied {
+			pending = append(pending, fmt.Sprintf("%s proxied 当前为 %t，期望 %t", name, record.Proxied, cfg.Proxied))
+		}
+	}
+	return pending, nil
+}
+
 func (c *Client) ensureZoneID(ctx context.Context) (string, error) {
 	if c.zoneID != "" {
 		return c.zoneID, nil

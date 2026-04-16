@@ -7,7 +7,6 @@ import (
 	"net"
 	"sort"
 	"strings"
-	"time"
 
 	"wg-ddns/internal/cloudflare"
 	"wg-ddns/internal/model"
@@ -68,9 +67,23 @@ func EnsureManagedDNS(stdout io.Writer, project model.Project) error {
 		}
 	}
 
-	fmt.Fprintln(stdout, "  等待 DNS 生效（快速轮询 2 分钟，必要时每 1 分钟重试 3 次）")
-	if err := waitForManagedDNS(stdout, targets, net.LookupIP); err != nil {
-		return err
+	expected := make(map[string]string, len(targets))
+	for _, t := range targets {
+		expected[t.Name] = t.IP
+	}
+	fmt.Fprintln(stdout, "  确认 Cloudflare DNS 记录...")
+	pending, err := cf.VerifyDNSRecords(ctx, project.Cloudflare, expected)
+	if err != nil {
+		return fmt.Errorf("DNS 预创建失败: %w", err)
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("Cloudflare DNS 记录仍未符合预期：%s", strings.Join(pending, "; "))
+	}
+	fmt.Fprintln(stdout, "  Cloudflare DNS 记录已确认。")
+
+	if pending := unresolvedTargets(targets, net.LookupIP); len(pending) > 0 {
+		fmt.Fprintf(stdout, "  本机解析器暂未刷新（不阻塞部署）：%s\n", strings.Join(pending, "; "))
+		fmt.Fprintln(stdout, "  这通常是本地/运营商 DNS 缓存导致；后续部署会优先使用当前直连 IP 或已确认的 Cloudflare 记录。")
 	}
 	return nil
 }
@@ -126,38 +139,6 @@ func isManagedDomain(name, zone string) bool {
 		return false
 	}
 	return name == zone || strings.HasSuffix(name, "."+zone)
-}
-
-func waitForManagedDNS(stdout io.Writer, targets []dnsTarget, lookup func(string) ([]net.IP, error)) error {
-	check := func() []string { return unresolvedTargets(targets, lookup) }
-
-	if pending := check(); len(pending) == 0 {
-		fmt.Fprintln(stdout, "  DNS 已生效。")
-		return nil
-	}
-
-	for i := 0; i < 24; i++ {
-		time.Sleep(5 * time.Second)
-		if pending := check(); len(pending) == 0 {
-			fmt.Fprintln(stdout, "  DNS 已生效。")
-			return nil
-		} else if i == 23 {
-			fmt.Fprintf(stdout, "  首轮等待结束，仍未生效：%s\n", strings.Join(pending, "; "))
-		}
-	}
-
-	for retry := 1; retry <= 3; retry++ {
-		fmt.Fprintf(stdout, "  第 %d 次重试：60 秒后再次检查 DNS...\n", retry)
-		time.Sleep(60 * time.Second)
-		if pending := check(); len(pending) == 0 {
-			fmt.Fprintln(stdout, "  DNS 已生效。")
-			return nil
-		} else if retry == 3 {
-			return fmt.Errorf("DNS 仍未生效：%s", strings.Join(pending, "; "))
-		}
-	}
-
-	return nil
 }
 
 func unresolvedTargets(targets []dnsTarget, lookup func(string) ([]net.IP, error)) []string {
