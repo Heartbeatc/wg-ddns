@@ -40,6 +40,7 @@ func RunSetupMenu(w io.Writer, draft *SetupDraft) (*SetupResult, error) {
 		if p.Err() != nil {
 			return nil, p.Err()
 		}
+		runAutomaticPreflight(w, draft)
 
 		fmt.Fprintln(w, renderPanelTitle("配置摘要与下一步"))
 		if done, act := runSummaryMenu(w, p, draft); done {
@@ -317,7 +318,7 @@ func runSummaryMenu(w io.Writer, p *Prompter, d *SetupDraft) (done bool, act Set
 
 		sub := []string{
 			"开始部署",
-			"逐项验证（SSH / Cloudflare / 域名）",
+			"重新运行预检（SSH / Cloudflare / DNS）",
 			"运行位置",
 			"入口节点",
 			"出口节点",
@@ -402,6 +403,9 @@ func tryDeploy(w io.Writer, p *Prompter, d *SetupDraft) bool {
 		fmt.Fprintf(w, "\n部署前检查失败：%v\n", err)
 		return false
 	}
+	if !runAutomaticPreflight(w, d) {
+		return false
+	}
 	if !p.Confirm("\n确认保存到 wgstack.json 并开始部署？", true) {
 		fmt.Fprintln(w, "已取消部署。")
 		return false
@@ -415,6 +419,17 @@ func tryDeploy(w io.Writer, p *Prompter, d *SetupDraft) bool {
 	}
 	if err := os.Remove(config.DraftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(w, "\n已写入 %s，但清理草稿失败：%v\n", config.DefaultPath, err)
+		return false
+	}
+	return true
+}
+
+func runAutomaticPreflight(w io.Writer, d *SetupDraft) bool {
+	fmt.Fprintln(w, renderPanelTitle("自动预检"))
+	fmt.Fprintln(w, "正在验证 Cloudflare、自动创建/更新 DNS，并检查入口/出口 SSH。")
+	if err := VerifyAll(w, d.Project, d.RC); err != nil {
+		fmt.Fprintf(w, "\n自动预检失败：%v\n", err)
+		fmt.Fprintln(w, "请在下面的摘要菜单里返回对应步骤修改；再次开始部署时会自动重试。")
 		return false
 	}
 	return true

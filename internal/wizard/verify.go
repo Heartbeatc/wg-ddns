@@ -163,6 +163,26 @@ func EnsureAndVerifyDomains(w io.Writer, project model.Project) error {
 	return VerifyDomains(w, project)
 }
 
+func VerifyAll(w io.Writer, project model.Project, rc model.RunContext) error {
+	checks := []struct {
+		label string
+		run   func() error
+	}{
+		{label: "Cloudflare", run: func() error { return VerifyCloudflare(w, project) }},
+		{label: "域名 DNS", run: func() error { return EnsureAndVerifyDomains(w, project) }},
+		{label: "入口节点", run: func() error { return VerifyEntrySSH(w, project, rc) }},
+		{label: "出口节点", run: func() error { return VerifyExitSSH(w, project, rc) }},
+	}
+	for _, check := range checks {
+		fmt.Fprintf(w, "\n[%s]\n", check.label)
+		if err := check.run(); err != nil {
+			return fmt.Errorf("%s 验证失败: %w", check.label, err)
+		}
+	}
+	fmt.Fprintln(w, "\n全部预检通过。")
+	return nil
+}
+
 func dialNodeForWizardVerify(w io.Writer, node model.Node, isLocal bool) (sshclient.Runner, error) {
 	if isLocal {
 		return sshclient.DialOrLocal(node, true)
@@ -192,32 +212,35 @@ func isManagedVerifyDomain(name string, project model.Project) bool {
 
 func runVerifySubmenu(w io.Writer, p *Prompter, d *SetupDraft) {
 	for {
-		fmt.Fprintln(w, "\n--- 逐项验证 ---")
+		fmt.Fprintln(w, "\n--- 部署前预检 ---")
 		opts := []string{
-			"验证入口节点 SSH / 本机环境",
-			"验证出口节点 SSH / 本机环境",
-			"验证 Cloudflare",
-			"预创建/验证域名 DNS",
+			"一键预检（SSH / Cloudflare / DNS）",
+			"高级：只验证入口节点",
+			"高级：只验证出口节点",
+			"高级：只验证 Cloudflare",
+			"高级：只预创建/验证域名 DNS",
 			"返回配置主菜单",
 		}
-		ch := p.Select("请选择验证项:", opts)
+		ch := p.Select("请选择:", opts)
 		if p.Err() != nil {
 			return
 		}
 		var err error
 		switch ch {
 		case 0:
-			err = VerifyEntrySSH(w, d.Project, d.RC)
+			err = VerifyAll(w, d.Project, d.RC)
 		case 1:
-			err = VerifyExitSSH(w, d.Project, d.RC)
+			err = VerifyEntrySSH(w, d.Project, d.RC)
 		case 2:
-			err = VerifyCloudflare(w, d.Project)
+			err = VerifyExitSSH(w, d.Project, d.RC)
 		case 3:
-			err = EnsureAndVerifyDomains(w, d.Project)
+			err = VerifyCloudflare(w, d.Project)
 		case 4:
+			err = EnsureAndVerifyDomains(w, d.Project)
+		case 5:
 			return
 		}
-		if ch >= 0 && ch <= 3 {
+		if ch >= 0 && ch <= 4 {
 			if err != nil {
 				fmt.Fprintf(w, "  验证失败: %v\n", err)
 			}
