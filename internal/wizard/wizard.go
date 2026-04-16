@@ -50,8 +50,8 @@ func collectNodeInfo(w io.Writer, p *Prompter, label string, isLocal bool) nodeI
 // collectNodeInfoWithDefaults is like collectNodeInfo but pre-fills from prev when non-empty.
 func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal bool, prev model.Node) nodeInput {
 	if isLocal {
-		fmt.Fprintf(w, "  当前机器即%s，无需 SSH 配置。\n", label)
-		fmt.Fprintln(w, "  正在自动检测本机公网 IP...")
+		fmt.Fprintln(w, helpStyle.Render(fmt.Sprintf("  当前机器即%s，无需 SSH 配置。", label)))
+		fmt.Fprintln(w, helpStyle.Render("  正在自动检测本机公网 IP..."))
 		def := strings.TrimSpace(prev.Host)
 		host := detectOrAskIPWithDefault(w, p, label, def)
 		return nodeInput{host: host, user: "root"}
@@ -61,12 +61,9 @@ func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal
 	host := p.LineWith(label+"的公网 IP 地址", hostDef, validateIP)
 
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  SSH 连接地址用于本工具远程管理该节点。")
-	fmt.Fprintln(w, "  如果节点 IP 可能变化（如入口节点换 IP，或出口节点使用家宽动态 IP），")
-	fmt.Fprintln(w, "  推荐填写一个稳定的域名，这样即使 IP 漂移，工具仍能连上节点。")
-	fmt.Fprintln(w, "  如果 IP 不会变化，直接回车使用公网 IP 即可。")
+	fmt.Fprintln(w, helpStyle.Render("  SSH 地址只用于管理该节点。IP 可能变化时，建议填写一个稳定域名。"))
 	if sh := strings.TrimSpace(prev.SSHHost); sh != "" {
-		fmt.Fprintf(w, "  当前 SSH 地址: %s\n", sh)
+		fmt.Fprintf(w, "%s\n", helpStyle.Render("  当前 SSH 地址: "+sh))
 	}
 	sshHost := p.OptionalLine("SSH 连接地址（域名或 IP，留空则使用公网 IP）")
 
@@ -113,25 +110,30 @@ func detectOrAskIPWithDefault(w io.Writer, p *Prompter, label, defaultIP string)
 	localClient.Close()
 
 	if detectErr == nil {
-		fmt.Fprintf(w, "  检测到公网 IP: %s\n", detectedIP)
+		fmt.Fprintf(w, "%s\n", successTextStyle.Render("  检测到当前机器公网 IP: "+detectedIP))
+		if strings.Contains(label, "入口") {
+			fmt.Fprintln(w, helpStyle.Render("  这里只确认当前公网 IP；入口业务域名会在后面的域名步骤设置。"))
+		} else {
+			fmt.Fprintln(w, helpStyle.Render("  这里只确认当前公网 IP；SSH 管理域名会在后续步骤继续配置。"))
+		}
 		fmt.Fprintln(w)
-		if p.Confirm("使用此 IP？", true) {
+		if p.Confirm("确认使用这个公网 IP 作为该节点当前地址？", true) {
 			return detectedIP
 		}
 		def := defaultIP
 		if def == "" {
 			def = detectedIP
 		}
-		return p.LineWith(label+"的公网 IP", def, validateIP)
+		return p.LineWith(label+"当前公网 IP（域名稍后设置）", def, validateIP)
 	}
 
-	fmt.Fprintf(w, "  自动检测失败: %v\n", detectErr)
+	fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  自动检测失败: "+detectErr.Error()))
 	fmt.Fprintln(w)
 	def := defaultIP
 	if def == "" {
 		def = ""
 	}
-	return p.LineWith(label+"的公网 IP（请手动输入）", def, validateIP)
+	return p.LineWith(label+"当前公网 IP（请手动输入，域名稍后设置）", def, validateIP)
 }
 
 func printWelcome(w io.Writer) {
