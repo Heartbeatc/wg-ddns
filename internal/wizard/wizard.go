@@ -33,12 +33,14 @@ func AskRunContext(p *Prompter) model.RunContext {
 
 // nodeInput holds user-supplied node connection info collected by the wizard.
 type nodeInput struct {
-	host       string // public IP of the node
-	sshHost    string // SSH connection address (domain or IP); empty means same as host
-	user       string
-	authMethod string
-	password   string
-	keyPath    string
+	host        string // public IP of the node
+	connectAddr string // bootstrap address used only during wizard-time SSH detection
+	sshHost     string // SSH connection address (domain or IP); empty means same as host
+	sshHostSet  bool
+	user        string
+	authMethod  string
+	password    string
+	keyPath     string
 }
 
 // collectNodeInfo gathers host/SSH info for one node.
@@ -58,12 +60,13 @@ func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal
 	}
 
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, helpStyle.Render("  先填写首次连接地址；连上节点后会自动探测当前公网 IP。"))
-	sshDef := strings.TrimSpace(prev.SSHHost)
-	if sshDef == "" {
-		sshDef = strings.TrimSpace(prev.Host)
+	fmt.Fprintln(w, helpStyle.Render("  先填写当前就能直连的地址（通常是当前公网 IP）。"))
+	fmt.Fprintln(w, helpStyle.Render("  长期使用的入口业务域名 / 出口管理域名会在后面的步骤自动配置。"))
+	connectDef := strings.TrimSpace(prev.Host)
+	if connectDef == "" {
+		connectDef = strings.TrimSpace(prev.SSHHost)
 	}
-	sshHost := p.LineWith("首次连接地址（IP 或已存在域名）", sshDef, nil)
+	connectAddr := p.LineWith("当前可直连地址（通常填当前公网 IP）", connectDef, nil)
 
 	userDef := strings.TrimSpace(prev.SSH.User)
 	if userDef == "" {
@@ -73,7 +76,7 @@ func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal
 
 	authIdx := p.Select("SSH 登录方式:", []string{"密码", "私钥文件"})
 
-	ni := nodeInput{sshHost: sshHost, user: user, authMethod: "password"}
+	ni := nodeInput{connectAddr: connectAddr, user: user, authMethod: "password"}
 	if authIdx == 0 {
 		ni.authMethod = "password"
 		pw := p.PasswordOptional("SSH 密码")
@@ -140,7 +143,7 @@ func detectOrAskIPWithDefault(w io.Writer, p *Prompter, label, defaultIP string)
 func detectOrAskRemoteIP(w io.Writer, p *Prompter, label string, ni nodeInput, defaultIP string) string {
 	temp := model.Node{
 		Host:    defaultIP,
-		SSHHost: ni.sshHost,
+		SSHHost: ni.connectAddr,
 		SSH: model.SSH{
 			User:                  ni.user,
 			Port:                  22,
@@ -176,8 +179,8 @@ func detectOrAskRemoteIP(w io.Writer, p *Prompter, label string, ni nodeInput, d
 	}
 
 	def := defaultIP
-	if def == "" && validateIP(ni.sshHost) == "" {
-		def = ni.sshHost
+	if def == "" && validateIP(ni.connectAddr) == "" {
+		def = ni.connectAddr
 	}
 	return p.LineWith(label+"当前公网 IP（用于 DDNS / 健康检查）", def, validateIP)
 }
