@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"wg-ddns/internal/config"
 	"wg-ddns/internal/deploy"
@@ -19,6 +20,7 @@ import (
 	"wg-ddns/internal/reconcile"
 	"wg-ddns/internal/render"
 	"wg-ddns/internal/selfupdate"
+	"wg-ddns/internal/sshclient"
 	"wg-ddns/internal/wizard"
 )
 
@@ -338,7 +340,7 @@ func runApply(args []string, stdout io.Writer) error {
 	}
 
 	notif := notify.FromConfig(project.Notifications, stdout)
-	rc := buildRunContext(localEntry, localExit)
+	rc := inferRunContext(stdout, project, buildRunContext(localEntry, localExit))
 	if err := deploy.Apply(project, stdout, *activate, rc); err != nil {
 		notify.Fire(stdout, notif, notify.FormatApplyFailure(project.Project, err.Error()))
 		return err
@@ -363,7 +365,7 @@ func runHealth(args []string, stdout io.Writer) error {
 	}
 
 	if *live {
-		rc := buildRunContext(localEntry, localExit)
+		rc := inferRunContext(stdout, project, buildRunContext(localEntry, localExit))
 		notif := notify.FromConfig(project.Notifications, stdout)
 		probes, liveErr := health.RunLive(project, rc)
 		if liveErr != nil {
@@ -398,7 +400,7 @@ func runReconcile(args []string, stdout io.Writer) error {
 	}
 
 	notif := notify.FromConfig(project.Notifications, stdout)
-	rc := buildRunContext(localEntry, localExit)
+	rc := inferRunContext(stdout, project, buildRunContext(localEntry, localExit))
 	result, runErr := reconcile.Run(context.Background(), project, stdout, reconcile.Options{DryRun: *dryRun, StatePath: *statePath}, rc)
 	handleReconcileResult(stdout, notif, project, result, runErr)
 	return runErr
@@ -477,6 +479,36 @@ func buildRunContext(localEntry, localExit *bool) model.RunContext {
 		EntryIsLocal: *localEntry,
 		ExitIsLocal:  *localExit,
 	}
+}
+
+func inferRunContext(stdout io.Writer, project model.Project, rc model.RunContext) model.RunContext {
+	return inferRunContextWithDetector(stdout, project, rc, func() (string, error) {
+		return health.DetectPublicIPv4(sshclient.NewLocal(), project.Checks.PublicIPCheckURL)
+	})
+}
+
+func inferRunContextWithDetector(stdout io.Writer, project model.Project, rc model.RunContext, detect func() (string, error)) model.RunContext {
+	if rc.EntryIsLocal && rc.ExitIsLocal {
+		return rc
+	}
+	ip, err := detect()
+	if err != nil {
+		return rc
+	}
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return rc
+	}
+
+	if !rc.EntryIsLocal && ip == strings.TrimSpace(project.Nodes.US.Host) {
+		rc.EntryIsLocal = true
+		fmt.Fprintln(stdout, "检测到当前机器公网 IP 与入口节点一致，已自动使用 --local-entry。")
+	}
+	if !rc.ExitIsLocal && ip == strings.TrimSpace(project.Nodes.HK.Host) {
+		rc.ExitIsLocal = true
+		fmt.Fprintln(stdout, "检测到当前机器公网 IP 与出口节点一致，已自动使用 --local-exit。")
+	}
+	return rc
 }
 
 func loadProject(args []string) (model.Project, error) {
