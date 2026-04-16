@@ -18,7 +18,7 @@ type dnsTarget struct {
 	IP   string
 }
 
-func ensureManagedDNS(stdout io.Writer, project model.Project) error {
+func EnsureManagedDNS(stdout io.Writer, project model.Project) error {
 	targets, err := managedDNSTargets(project)
 	if err != nil {
 		return err

@@ -70,7 +70,7 @@ func Apply(project model.Project, stdout io.Writer, activate bool, rc model.RunC
 	if err := config.ValidateDeploy(project, rc); err != nil {
 		return err
 	}
-	if err := ensureManagedDNS(stdout, project); err != nil {
+	if err := EnsureManagedDNS(stdout, project); err != nil {
 		return err
 	}
 

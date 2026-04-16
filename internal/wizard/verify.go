@@ -9,6 +9,7 @@ import (
 
 	"wg-ddns/internal/cloudflare"
 	"wg-ddns/internal/config"
+	"wg-ddns/internal/deploy"
 	"wg-ddns/internal/model"
 	"wg-ddns/internal/sshclient"
 )
@@ -150,6 +151,18 @@ func VerifyDomains(w io.Writer, project model.Project) error {
 	return nil
 }
 
+// EnsureAndVerifyDomains creates/updates managed Cloudflare records and waits
+// until the local resolver sees the desired values.
+func EnsureAndVerifyDomains(w io.Writer, project model.Project) error {
+	if err := config.Validate(project); err != nil {
+		return fmt.Errorf("配置不完整，无法预创建 DNS: %w", err)
+	}
+	if err := deploy.EnsureManagedDNS(w, project); err != nil {
+		return err
+	}
+	return VerifyDomains(w, project)
+}
+
 func dialNodeForWizardVerify(w io.Writer, node model.Node, isLocal bool) (sshclient.Runner, error) {
 	if isLocal {
 		return sshclient.DialOrLocal(node, true)
@@ -184,7 +197,7 @@ func runVerifySubmenu(w io.Writer, p *Prompter, d *SetupDraft) {
 			"验证入口节点 SSH / 本机环境",
 			"验证出口节点 SSH / 本机环境",
 			"验证 Cloudflare",
-			"验证域名解析",
+			"预创建/验证域名 DNS",
 			"返回配置主菜单",
 		}
 		ch := p.Select("请选择验证项:", opts)
@@ -200,7 +213,7 @@ func runVerifySubmenu(w io.Writer, p *Prompter, d *SetupDraft) {
 		case 2:
 			err = VerifyCloudflare(w, d.Project)
 		case 3:
-			err = VerifyDomains(w, d.Project)
+			err = EnsureAndVerifyDomains(w, d.Project)
 		case 4:
 			return
 		}
