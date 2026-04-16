@@ -53,8 +53,9 @@ func DefaultProject() model.Project {
 				},
 			},
 			HK: model.Node{
-				Role: "exit",
-				Host: "5.6.7.8",
+				Role:    "exit",
+				Host:    "5.6.7.8",
+				SSHHost: "ssh.exit.example.com",
 				SSH: model.SSH{
 					User:                  "root",
 					Port:                  22,
@@ -91,12 +92,13 @@ func DefaultProject() model.Project {
 			},
 		},
 		ExitDDNS: model.ExitDDNS{
-			Enabled:  false,
-			Interval: 300,
+			Enabled:  true,
+			Domain:   "ssh.exit.example.com",
+			Interval: 60,
 		},
 		EntryAutoReconcile: model.AutoReconcile{
-			Enabled:  false,
-			Interval: 300,
+			Enabled:  true,
+			Interval: 60,
 		},
 	}
 }

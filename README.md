@@ -137,9 +137,9 @@ wgstack
 3. **出口节点** — 同上
 4. **Cloudflare** — Zone 与 API Token
 5. **域名** — 对外域名、面板域名是否分开、WG Endpoint 是否单独域名
-6. **出口管理 DDNS** — 家宽动态 IP 时是否启用 SSH 管理域名自动更新
-7. **入口自动修复** — 是否在入口节点启用定时自动修复
-8. **面板与检查** — 出站标签、路由用户、出口地区代码（可选）
+6. **出口管理 DDNS** — 默认启用，只需填写出口 SSH 管理域名
+7. **入口自动修复** — 默认启用，入口节点定时修复 IP / DNS 漂移
+8. **面板与检查** — 默认使用 `exit-socks` / `exit-user@local`，出口地区校验默认跳过
 9. **重新运行预检** — 可选排障入口；正常流程会在 6 步完成后和部署前自动运行
 10. **查看部署摘要** — 展示全文摘要，并可从摘要中跳转回任一项修改，或确认部署
 11. **开始部署** — 校验通过后写入配置并执行部署
@@ -325,14 +325,14 @@ wgstack
 
 ### 如何启用
 
-**向导方式**：首次运行 `wgstack` 时，向导第 7 步会询问是否启用入口自动修复，默认推荐开启。
+**向导方式**：首次运行 `wgstack` 时，向导默认启用入口自动修复，不再要求手动选择 Y/N。
 
 **手动配置**：在 `wgstack.json` 中添加：
 
 ```json
 "entry_autoreconcile": {
   "enabled": true,
-  "interval_seconds": 300
+  "interval_seconds": 60
 }
 ```
 
@@ -346,7 +346,7 @@ wgstack
 | `/etc/wgstack/exit_key` | 入口→出口的 SSH 私钥（自动生成的 ed25519 密钥对） |
 | `/usr/local/bin/wgstack-reconcile` | 修复脚本（检测 IP + DNS 漂移 → 更新 DNS → 重启出口 WG → 通知） |
 | `wgstack-reconcile.service` | systemd oneshot 服务 |
-| `wgstack-reconcile.timer` | systemd 定时器（默认每 5 分钟） |
+| `wgstack-reconcile.timer` | systemd 定时器（默认每 60 秒） |
 
 同时会在出口节点的 `~/.ssh/authorized_keys` 中添加对应的公钥，授权入口节点 SSH 连接出口节点重启 WireGuard。
 
@@ -392,7 +392,7 @@ wgstack
 
 ### 如何启用
 
-**向导方式**：首次运行 `wgstack` 时，向导会询问出口 IP 是否可能变化。选择"是"后，可以启用 DDNS 并填写管理域名。
+**向导方式**：首次运行 `wgstack` 时，向导默认启用出口管理 DDNS，只需要填写出口 SSH 管理域名。
 
 **手动配置**：在 `wgstack.json` 中添加：
 
@@ -400,7 +400,7 @@ wgstack
 "exit_ddns": {
   "enabled": true,
   "domain": "ssh-exit.example.com",
-  "interval_seconds": 300
+  "interval_seconds": 60
 }
 ```
 
@@ -426,7 +426,7 @@ wgstack
 | `/etc/wgstack/ddns.env` | DDNS 配置（Cloudflare token、域名、刷新间隔） |
 | `/usr/local/bin/wgstack-ddns` | 更新脚本（检测 IP → 更新 Cloudflare） |
 | `wgstack-ddns.service` | systemd oneshot 服务 |
-| `wgstack-ddns.timer` | systemd 定时器（默认每 5 分钟） |
+| `wgstack-ddns.timer` | systemd 定时器（默认每 60 秒） |
 
 配置文件 `/etc/wgstack/ddns.env` 权限为 `0600`，其中包含 Cloudflare API token。
 

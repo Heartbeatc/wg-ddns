@@ -78,12 +78,12 @@
     }
   },
   "exit_ddns": {
-    "enabled": false,
-    "domain": "ssh-exit.example.com",
-    "interval_seconds": 300
+    "enabled": true,
+    "domain": "ssh.exit.example.com",
+    "interval_seconds": 60
   },
   "entry_autoreconcile": {
-    "enabled": false,
-    "interval_seconds": 300
+    "enabled": true,
+    "interval_seconds": 60
   }
 }

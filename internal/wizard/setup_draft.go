@@ -127,7 +127,7 @@ func (d *SetupDraft) statusEntryAuto() string {
 	if d.Project.EntryAutoReconcile.Enabled {
 		iv := d.Project.EntryAutoReconcile.Interval
 		if iv < 60 {
-			iv = 300
+			iv = 60
 		}
 		return "已启用 · 间隔 " + strconv.Itoa(iv) + "s"
 	}
@@ -206,12 +206,12 @@ func NewSetupDraft() (*SetupDraft, error) {
 			},
 		},
 		ExitDDNS: model.ExitDDNS{
-			Enabled:  false,
-			Interval: 300,
+			Enabled:  true,
+			Interval: 60,
 		},
 		EntryAutoReconcile: model.AutoReconcile{
-			Enabled:  false,
-			Interval: 300,
+			Enabled:  true,
+			Interval: 60,
 		},
 	}
 
@@ -305,10 +305,10 @@ func NewSetupDraftFromProject(project model.Project) (*SetupDraft, error) {
 		project.Notifications.Telegram.BotTokenEnv = "TELEGRAM_BOT_TOKEN"
 	}
 	if project.ExitDDNS.Interval < 60 {
-		project.ExitDDNS.Interval = 300
+		project.ExitDDNS.Interval = 60
 	}
 	if project.EntryAutoReconcile.Interval < 60 {
-		project.EntryAutoReconcile.Interval = 300
+		project.EntryAutoReconcile.Interval = 60
 	}
 
 	if strings.TrimSpace(project.Nodes.US.WGPrivateKey) == "" || strings.TrimSpace(project.Nodes.US.WGPublicKey) == "" {

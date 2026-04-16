@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 
@@ -89,7 +90,7 @@ func runGuidedSetup(w io.Writer, p *Prompter, draft *SetupDraft) {
 	if p.Err() != nil {
 		return
 	}
-	stepPanelHealth(w, p, draft)
+	applyPanelHealthDefaults(w, draft)
 }
 
 func printProgressHeader(w io.Writer, step, total int, title, hint string) {
@@ -231,7 +232,7 @@ func shouldSyncEntrySSHHost(currentSSHHost, previousEntryDomain string) bool {
 
 func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
 	fmt.Fprintln(w, renderSectionTitle("出口管理 DDNS"))
-	fmt.Fprintln(w, helpStyle.Render("  仅在出口公网 IP 可能变化时启用；用于维护出口 SSH 管理域名。"))
+	fmt.Fprintln(w, helpStyle.Render("  默认启用，用于维护出口 SSH 管理域名。出口 IP 变化后，本工具仍能连上出口节点。"))
 	fmt.Fprintln(w, helpStyle.Render("  首次部署时，wgstack 也会自动创建这个管理域名的 DNS 记录。"))
 	d.ExitDDNSTouched = true
 
@@ -240,44 +241,60 @@ func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
 		fmt.Fprintln(w, helpStyle.Render("  尚未填写 Cloudflare Zone，默认域名后缀可能不完整。"))
 	}
 
-	dynamic := p.Confirm("出口节点公网 IP 是否可能变化（如家宽动态 IP）？", d.Project.ExitDDNS.Enabled)
-	if !dynamic {
-		d.Project.ExitDDNS = model.ExitDDNS{Enabled: false, Interval: 300}
-		fmt.Fprintln(w)
-		return
-	}
-
-	enable := p.Confirm("启用出口 SSH 管理域名 DDNS？", true)
-	if !enable {
-		d.Project.ExitDDNS = model.ExitDDNS{Enabled: false, Interval: 300}
-		fmt.Fprintln(w)
-		return
-	}
-
 	ddDef := strings.TrimSpace(d.Project.ExitDDNS.Domain)
 	if ddDef == "" {
-		ddDef = "ssh-exit." + cfZone
+		ddDef = domainDefault(d.Project.Nodes.HK.SSHHost, "ssh-exit."+cfZone)
 	}
 	dd := p.LineWith("出口 SSH 管理域名", ddDef, validateDomain)
 	if p.Err() != nil {
 		return
 	}
-	d.Project.ExitDDNS = model.ExitDDNS{Enabled: true, Domain: dd, Interval: 300}
+	d.Project.ExitDDNS = model.ExitDDNS{Enabled: true, Domain: dd, Interval: 60}
 	d.Project.Nodes.HK.SSHHost = dd
-	fmt.Fprintln(w, helpStyle.Render("  已将出口 SSH 管理域名设为该地址。"))
+	fmt.Fprintln(w, helpStyle.Render("  已启用出口管理 DDNS，并将出口 SSH 管理域名设为该地址。"))
 	fmt.Fprintln(w)
 }
 
 func stepEntryAuto(w io.Writer, p *Prompter, d *SetupDraft) {
 	fmt.Fprintln(w, renderSectionTitle("入口自动修复"))
-	fmt.Fprintln(w, helpStyle.Render("  入口节点会定时检查 IP / DNS 漂移，并在需要时自动修复。"))
+	fmt.Fprintln(w, helpStyle.Render("  默认启用。入口节点会定时检查 IP / DNS 漂移，并在需要时自动修复。"))
 	d.EntryAutoTouched = true
+	d.Project.EntryAutoReconcile = model.AutoReconcile{Enabled: true, Interval: 60}
+	fmt.Fprintln(w, helpStyle.Render("  已启用入口自动修复，检查间隔 60s。"))
+	fmt.Fprintln(w)
+}
 
-	en := p.Confirm("启用入口节点 IP 与 DNS 自动修复？", d.Project.EntryAutoReconcile.Enabled)
-	if en {
-		d.Project.EntryAutoReconcile = model.AutoReconcile{Enabled: true, Interval: 300}
+func domainDefault(current, fallback string) string {
+	current = strings.TrimSpace(current)
+	if current != "" && net.ParseIP(current) == nil {
+		return current
+	}
+	return fallback
+}
+
+func applyPanelHealthDefaults(w io.Writer, d *SetupDraft) {
+	fmt.Fprintln(w, renderSectionTitle("面板与检查"))
+	if strings.TrimSpace(d.Project.PanelGuide.OutboundTag) == "" {
+		d.Project.PanelGuide.OutboundTag = "exit-socks"
+	}
+	if strings.TrimSpace(d.Project.PanelGuide.RouteUser) == "" {
+		d.Project.PanelGuide.RouteUser = "exit-user@local"
+	}
+	if strings.TrimSpace(d.Project.Checks.TestURL) == "" {
+		d.Project.Checks.TestURL = "https://ifconfig.me"
+	}
+	if strings.TrimSpace(d.Project.Checks.ExitCheckURL) == "" {
+		d.Project.Checks.ExitCheckURL = "https://api.ipify.org"
+	}
+	if strings.TrimSpace(d.Project.Checks.PublicIPCheckURL) == "" {
+		d.Project.Checks.PublicIPCheckURL = "https://api.ipify.org"
+	}
+	fmt.Fprintf(w, "  已采用默认面板出站标签：%s\n", d.Project.PanelGuide.OutboundTag)
+	fmt.Fprintf(w, "  已采用默认专用线路用户：%s\n", d.Project.PanelGuide.RouteUser)
+	if strings.TrimSpace(d.Project.Checks.ExitLocation) == "" {
+		fmt.Fprintln(w, "  出口地区校验：未启用（可在摘要页进入「面板与检查」修改）。")
 	} else {
-		d.Project.EntryAutoReconcile = model.AutoReconcile{Enabled: false, Interval: 300}
+		fmt.Fprintf(w, "  出口地区校验：%s\n", d.Project.Checks.ExitLocation)
 	}
 	fmt.Fprintln(w)
 }
