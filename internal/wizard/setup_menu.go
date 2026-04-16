@@ -55,13 +55,13 @@ func runGuidedSetup(w io.Writer, p *Prompter, draft *SetupDraft) {
 		return
 	}
 
-	printProgressHeader(w, 2, 6, "入口节点", "填写入口节点公网 IP 和 SSH 管理信息。")
+	printProgressHeader(w, 2, 6, "入口节点", "先填写 SSH 管理地址，再自动确认当前公网 IP。")
 	stepEntryNode(w, p, draft)
 	if p.Err() != nil {
 		return
 	}
 
-	printProgressHeader(w, 3, 6, "出口节点", "填写出口节点公网 IP 和 SSH 管理信息。")
+	printProgressHeader(w, 3, 6, "出口节点", "先填写 SSH 管理地址，再自动确认当前公网 IP。")
 	stepExitNode(w, p, draft)
 	if p.Err() != nil {
 		return

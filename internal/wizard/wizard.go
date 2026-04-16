@@ -57,15 +57,13 @@ func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal
 		return nodeInput{host: host, user: "root"}
 	}
 
-	hostDef := strings.TrimSpace(prev.Host)
-	host := p.LineWith(label+"的公网 IP 地址", hostDef, validateIP)
-
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, helpStyle.Render("  SSH 地址只用于管理该节点。IP 可能变化时，建议填写一个稳定域名。"))
-	if sh := strings.TrimSpace(prev.SSHHost); sh != "" {
-		fmt.Fprintf(w, "%s\n", helpStyle.Render("  当前 SSH 地址: "+sh))
+	fmt.Fprintln(w, helpStyle.Render("  先填写 SSH 管理地址；连上节点后会自动探测当前公网 IP。"))
+	sshDef := strings.TrimSpace(prev.SSHHost)
+	if sshDef == "" {
+		sshDef = strings.TrimSpace(prev.Host)
 	}
-	sshHost := p.OptionalLine("SSH 连接地址（域名或 IP，留空则使用公网 IP）")
+	sshHost := p.LineWith("SSH 连接地址（域名或 IP）", sshDef, nil)
 
 	userDef := strings.TrimSpace(prev.SSH.User)
 	if userDef == "" {
@@ -75,7 +73,7 @@ func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal
 
 	authIdx := p.Select("SSH 登录方式:", []string{"密码", "私钥文件"})
 
-	ni := nodeInput{host: host, sshHost: sshHost, user: user, authMethod: "password"}
+	ni := nodeInput{sshHost: sshHost, user: user, authMethod: "password"}
 	if authIdx == 0 {
 		ni.authMethod = "password"
 		pw := p.PasswordOptional("SSH 密码")
@@ -94,6 +92,9 @@ func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal
 		}
 		ni.keyPath = p.LineWith("私钥文件路径", keyDef, nil)
 	}
+
+	hostDef := strings.TrimSpace(prev.Host)
+	ni.host = detectOrAskRemoteIP(w, p, label, ni, hostDef)
 	return ni
 }
 
@@ -134,6 +135,51 @@ func detectOrAskIPWithDefault(w io.Writer, p *Prompter, label, defaultIP string)
 		def = ""
 	}
 	return p.LineWith(label+"当前公网 IP（请手动输入，域名稍后设置）", def, validateIP)
+}
+
+func detectOrAskRemoteIP(w io.Writer, p *Prompter, label string, ni nodeInput, defaultIP string) string {
+	temp := model.Node{
+		Host:    defaultIP,
+		SSHHost: ni.sshHost,
+		SSH: model.SSH{
+			User:                  ni.user,
+			Port:                  22,
+			AuthMethod:            ni.authMethod,
+			Password:              ni.password,
+			PrivateKeyPath:        ni.keyPath,
+			InsecureIgnoreHostKey: true,
+		},
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, helpStyle.Render("  正在通过 SSH 检测该节点当前公网 IP..."))
+	client, err := sshclient.Dial(temp)
+	if err == nil {
+		defer client.Close()
+		detectedIP, detectErr := health.DetectPublicIPv4(client, "https://api.ipify.org")
+		if detectErr == nil {
+			fmt.Fprintf(w, "%s\n", successTextStyle.Render("  通过 SSH 检测到当前公网 IP: "+detectedIP))
+			fmt.Fprintln(w, helpStyle.Render("  该 IP 仅用于 DDNS、健康检查和部署摘要；业务域名会在后面的域名步骤设置。"))
+			fmt.Fprintln(w)
+			if p.Confirm("确认使用这个公网 IP 作为该节点当前地址？", true) {
+				return detectedIP
+			}
+			def := defaultIP
+			if def == "" {
+				def = detectedIP
+			}
+			return p.LineWith(label+"当前公网 IP（用于 DDNS / 健康检查）", def, validateIP)
+		}
+		fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  SSH 已连接，但自动检测公网 IP 失败: "+detectErr.Error()))
+	} else {
+		fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  SSH 连接失败，无法自动检测公网 IP: "+err.Error()))
+	}
+
+	def := defaultIP
+	if def == "" && validateIP(ni.sshHost) == "" {
+		def = ni.sshHost
+	}
+	return p.LineWith(label+"当前公网 IP（用于 DDNS / 健康检查）", def, validateIP)
 }
 
 func printWelcome(w io.Writer) {
