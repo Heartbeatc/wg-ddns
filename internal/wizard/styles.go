@@ -10,19 +10,16 @@ var (
 	colorAccent  = lipgloss.Color("#59E1C5")
 	colorAccent2 = lipgloss.Color("#7BC6FF")
 	colorAccent3 = lipgloss.Color("#B58CFF")
-	colorAccent4 = lipgloss.Color("#FF6FAE")
 	colorMuted   = lipgloss.Color("#7E8A97")
 	colorText    = lipgloss.Color("#F3F6F8")
 	colorTextDim = lipgloss.Color("#C7D1D8")
 	colorBorder  = lipgloss.Color("#2D3943")
-	colorPanel   = lipgloss.Color("#171C24")
 	colorSuccess = lipgloss.Color("#7EE081")
 	colorWarn    = lipgloss.Color("#F5C26B")
 
 	welcomeBoxStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
+			BorderStyle(lipgloss.NormalBorder()).
 			BorderForeground(colorBorder).
-			Background(colorPanel).
 			Padding(1, 2).
 			MarginBottom(1)
 
@@ -84,7 +81,7 @@ var (
 
 	tabActiveStyle = lipgloss.NewStyle().
 			Foreground(colorText).
-			Background(colorAccent3).
+			Background(colorAccent2).
 			Padding(0, 1)
 
 	tabIdleStyle = lipgloss.NewStyle().
@@ -93,63 +90,24 @@ var (
 			BorderForeground(colorBorder).
 			Padding(0, 1)
 
-	chipStyle = lipgloss.NewStyle().
-			Foreground(colorText).
-			Background(colorAccent4).
-			Padding(0, 1)
-
-	chipAltStyle = lipgloss.NewStyle().
-			Foreground(colorText).
-			Background(colorAccent3).
-			Padding(0, 1)
-
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(colorText).
-			Background(colorBorder).
-			Padding(0, 1)
-
-	windowBarStyle = lipgloss.NewStyle().
-			Foreground(colorMuted)
+	activeTrailStyle = lipgloss.NewStyle().
+				Foreground(colorAccent).
+				Bold(true)
 )
 
 func renderWelcome(path string) string {
-	header := lipgloss.JoinHorizontal(
-		lipgloss.Center,
-		windowBarStyle.Render("● "),
-		lipgloss.NewStyle().Foreground(colorWarn).Render("● "),
-		lipgloss.NewStyle().Foreground(colorSuccess).Render("●"),
-		"  ",
-		metaStyle.Render("./wgstack"),
-	)
 	brand := lipgloss.JoinVertical(
 		lipgloss.Left,
-		lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			logoStyle.Render("▌"),
-			" ",
-			lipgloss.JoinVertical(
-				lipgloss.Left,
-				logoStyle.Render("wgstack"),
-				logoSubStyle.Render("Entry / Exit Deploy"),
-			),
-		),
+		logoStyle.Render("wgstack"),
+		logoSubStyle.Render("Entry / Exit Deploy"),
 		helpStyle.Render("WireGuard · sing-box · Cloudflare"),
-	)
-	chips := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		chipStyle.Render("WG Tunnel"),
-		" ",
-		chipAltStyle.Render("Exit SOCKS"),
-		" ",
-		tabIdleStyle.Render("Auto Repair"),
 	)
 	meta := lipgloss.JoinVertical(
 		lipgloss.Left,
 		metaStyle.Render(path),
-		softBodyStyle.Render("6 steps · 入口业务域名默认复用到面板和 WG"),
-		statusBarStyle.Render("root SSH · Cloudflare Token · 1 个入口业务域名"),
+		softBodyStyle.Render("6 steps · root SSH · Cloudflare Token · 1 个入口业务域名"),
 	)
-	return welcomeBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", brand, "", chips, "", meta))
+	return welcomeBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, brand, "", meta))
 }
 
 func renderProgress(step, total int, title, hint string) string {
@@ -157,7 +115,9 @@ func renderProgress(step, total int, title, hint string) string {
 		lipgloss.Center,
 		badgeStyle.Render(fmt.Sprintf("步骤 %d/%d", step, total)),
 		"  ",
-		screenTitleStyle.Render(title),
+		screenTitleStyle.Render("当前步骤"),
+		"  ",
+		bodyStyle.Render(title),
 	)
 	steps := []string{"运行位置", "入口节点", "出口节点", "Cloudflare", "域名", "自动化"}
 	tabs := make([]string, 0, len(steps))
@@ -186,10 +146,6 @@ func renderPanelTitle(title string) string {
 
 func renderSectionTitle(title string) string {
 	return "\n" + sectionTitleStyle.Render("◆ "+title)
-}
-
-func renderSavedNote(text string) string {
-	return successTextStyle.Render("  " + text)
 }
 
 func repeat(s string, n int) string {

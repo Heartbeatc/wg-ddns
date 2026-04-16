@@ -58,12 +58,12 @@ func collectNodeInfoWithDefaults(w io.Writer, p *Prompter, label string, isLocal
 	}
 
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, helpStyle.Render("  先填写 SSH 管理地址；连上节点后会自动探测当前公网 IP。"))
+	fmt.Fprintln(w, helpStyle.Render("  先填写首次连接地址；连上节点后会自动探测当前公网 IP。"))
 	sshDef := strings.TrimSpace(prev.SSHHost)
 	if sshDef == "" {
 		sshDef = strings.TrimSpace(prev.Host)
 	}
-	sshHost := p.LineWith("SSH 连接地址（域名或 IP）", sshDef, nil)
+	sshHost := p.LineWith("首次连接地址（IP 或已存在域名）", sshDef, nil)
 
 	userDef := strings.TrimSpace(prev.SSH.User)
 	if userDef == "" {
@@ -170,9 +170,9 @@ func detectOrAskRemoteIP(w io.Writer, p *Prompter, label string, ni nodeInput, d
 			}
 			return p.LineWith(label+"当前公网 IP（用于 DDNS / 健康检查）", def, validateIP)
 		}
-		fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  SSH 已连接，但自动检测公网 IP 失败: "+detectErr.Error()))
+		fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  已连上节点，但自动检测公网 IP 失败: "+detectErr.Error()))
 	} else {
-		fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  SSH 连接失败，无法自动检测公网 IP: "+err.Error()))
+		fmt.Fprintf(w, "%s\n", warnTextStyle.Render("  首次连接失败，无法自动检测公网 IP: "+err.Error()))
 	}
 
 	def := defaultIP

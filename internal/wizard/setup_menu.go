@@ -105,7 +105,6 @@ func finalizeSetupResult(d *SetupDraft, act SetupAction) (*SetupResult, error) {
 
 func stepRunLocation(w io.Writer, p *Prompter, d *SetupDraft) {
 	fmt.Fprintln(w, renderSectionTitle("运行位置"))
-	fmt.Fprintln(w, helpStyle.Render("  选择当前运行位置，决定哪些节点需要填写 SSH 信息。"))
 	idx := p.Select("你当前在哪台机器上运行 wgstack？", RunLocationOptions)
 	if p.Err() != nil {
 		return
@@ -115,7 +114,7 @@ func stepRunLocation(w io.Writer, p *Prompter, d *SetupDraft) {
 		ExitIsLocal:  idx == 2,
 	}
 	d.RCSet = true
-	fmt.Fprintln(w, renderSavedNote("已保存（内存中，尚未写入文件）。"))
+	fmt.Fprintln(w)
 }
 
 func stepEntryNode(w io.Writer, p *Prompter, d *SetupDraft) {
@@ -129,7 +128,7 @@ func stepEntryNode(w io.Writer, p *Prompter, d *SetupDraft) {
 		return
 	}
 	applyNodeInput(&d.Project.Nodes.US, ni)
-	fmt.Fprintln(w, renderSavedNote("已保存（内存中）。"))
+	fmt.Fprintln(w)
 }
 
 func stepExitNode(w io.Writer, p *Prompter, d *SetupDraft) {
@@ -143,7 +142,7 @@ func stepExitNode(w io.Writer, p *Prompter, d *SetupDraft) {
 		return
 	}
 	applyNodeInput(&d.Project.Nodes.HK, ni)
-	fmt.Fprintln(w, renderSavedNote("已保存（内存中）。"))
+	fmt.Fprintln(w)
 }
 
 func applyNodeInput(n *model.Node, ni nodeInput) {
@@ -186,7 +185,7 @@ func stepCloudflare(w io.Writer, p *Prompter, d *SetupDraft) {
 	} else if strings.TrimSpace(d.Project.Cloudflare.Token) == "" {
 		d.Project.Cloudflare.Token = p.Password("Cloudflare API Token（必填）")
 	}
-	fmt.Fprintln(w, renderSavedNote("已保存（内存中）。"))
+	fmt.Fprintln(w)
 }
 
 func stepDomains(w io.Writer, p *Prompter, d *SetupDraft) {
@@ -212,7 +211,11 @@ func stepDomains(w io.Writer, p *Prompter, d *SetupDraft) {
 		Panel:     entryDomain,
 		WireGuard: entryDomain,
 	}
-	fmt.Fprintln(w, renderSavedNote(fmt.Sprintf("已保存：面板 / 代理入口 / WG Endpoint 均使用 %s", entryDomain)))
+	if strings.TrimSpace(d.Project.Nodes.US.SSHHost) == "" || strings.TrimSpace(d.Project.Nodes.US.SSHHost) == strings.TrimSpace(d.Project.Domains.Entry) {
+		d.Project.Nodes.US.SSHHost = entryDomain
+	}
+	fmt.Fprintln(w, helpStyle.Render("  面板、代理入口和 WG Endpoint 将默认复用这个域名。"))
+	fmt.Fprintln(w)
 }
 
 func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
@@ -229,14 +232,14 @@ func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
 	dynamic := p.Confirm("出口节点公网 IP 是否可能变化（如家宽动态 IP）？", d.Project.ExitDDNS.Enabled)
 	if !dynamic {
 		d.Project.ExitDDNS = model.ExitDDNS{Enabled: false, Interval: 300}
-		fmt.Fprintln(w, renderSavedNote("已关闭出口管理 DDNS（内存中）。"))
+		fmt.Fprintln(w)
 		return
 	}
 
 	enable := p.Confirm("启用出口 SSH 管理域名 DDNS？", true)
 	if !enable {
 		d.Project.ExitDDNS = model.ExitDDNS{Enabled: false, Interval: 300}
-		fmt.Fprintln(w, renderSavedNote("已关闭（内存中）。"))
+		fmt.Fprintln(w)
 		return
 	}
 
@@ -250,7 +253,8 @@ func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
 	}
 	d.Project.ExitDDNS = model.ExitDDNS{Enabled: true, Domain: dd, Interval: 300}
 	d.Project.Nodes.HK.SSHHost = dd
-	fmt.Fprintln(w, renderSavedNote("已启用，并已将出口 ssh_host 设为该域名（内存中）。"))
+	fmt.Fprintln(w, helpStyle.Render("  已将出口 SSH 管理域名设为该地址。"))
+	fmt.Fprintln(w)
 }
 
 func stepEntryAuto(w io.Writer, p *Prompter, d *SetupDraft) {
@@ -261,11 +265,10 @@ func stepEntryAuto(w io.Writer, p *Prompter, d *SetupDraft) {
 	en := p.Confirm("启用入口节点 IP 与 DNS 自动修复？", d.Project.EntryAutoReconcile.Enabled)
 	if en {
 		d.Project.EntryAutoReconcile = model.AutoReconcile{Enabled: true, Interval: 300}
-		fmt.Fprintln(w, renderSavedNote("已启用（默认间隔 300s，内存中）。"))
 	} else {
 		d.Project.EntryAutoReconcile = model.AutoReconcile{Enabled: false, Interval: 300}
-		fmt.Fprintln(w, renderSavedNote("已关闭（内存中）。"))
 	}
+	fmt.Fprintln(w)
 }
 
 func stepPanelHealth(w io.Writer, p *Prompter, d *SetupDraft) {
@@ -294,7 +297,7 @@ func stepPanelHealth(w io.Writer, p *Prompter, d *SetupDraft) {
 	if d.Project.Checks.PublicIPCheckURL == "" {
 		d.Project.Checks.PublicIPCheckURL = "https://api.ipify.org"
 	}
-	fmt.Fprintln(w, renderSavedNote("已保存（内存中）。"))
+	fmt.Fprintln(w)
 }
 
 func runSummaryMenu(w io.Writer, p *Prompter, d *SetupDraft) (done bool, act SetupAction) {
