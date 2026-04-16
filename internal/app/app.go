@@ -126,14 +126,16 @@ func loadSetupDraft(stdout io.Writer, seed *model.Project) (*wizard.SetupDraft, 
 		if err != nil {
 			return nil, fmt.Errorf("读取草稿失败 %s: %w", config.DraftPath, err)
 		}
-		fmt.Fprintf(stdout, "检测到未完成的配置草稿，已载入 %s。\n\n", config.DraftPath)
+		fmt.Fprintln(stdout, "已继续上次未完成的设置。")
+		fmt.Fprintln(stdout)
 		return wizard.NewSetupDraftFromProject(project)
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("检查草稿文件失败 %s: %w", config.DraftPath, err)
 	}
 
 	if seed != nil {
-		fmt.Fprintf(stdout, "已载入当前配置 %s，可直接回改已有设置。\n\n", config.DefaultPath)
+		fmt.Fprintln(stdout, "已载入当前配置，可以直接修改已有设置。")
+		fmt.Fprintln(stdout)
 		return wizard.NewSetupDraftFromProject(*seed)
 	}
 
@@ -142,7 +144,8 @@ func loadSetupDraft(stdout io.Writer, seed *model.Project) (*wizard.SetupDraft, 
 		if err != nil {
 			return nil, fmt.Errorf("读取现有配置失败 %s: %w", config.DefaultPath, err)
 		}
-		fmt.Fprintf(stdout, "已载入当前配置 %s，可直接回改已有设置。\n\n", config.DefaultPath)
+		fmt.Fprintln(stdout, "已载入当前配置，可以直接修改已有设置。")
+		fmt.Fprintln(stdout)
 		return wizard.NewSetupDraftFromProject(project)
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("检查配置文件失败 %s: %w", config.DefaultPath, err)

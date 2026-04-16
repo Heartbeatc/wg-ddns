@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"wg-ddns/internal/health"
@@ -133,27 +135,23 @@ func detectOrAskIPWithDefault(w io.Writer, p *Prompter, label, defaultIP string)
 }
 
 func printWelcome(w io.Writer) {
+	wd, _ := os.Getwd()
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "========================================")
-	fmt.Fprintln(w, "  wgstack - 代理底层部署工具")
-	fmt.Fprintln(w, "========================================")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "这个工具帮你搭建「入口节点 + 出口节点」的代理底层链路。")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "它会自动完成：")
-	fmt.Fprintln(w, "  • 在两台节点间建立 WireGuard 加密隧道")
-	fmt.Fprintln(w, "  • 在出口节点部署 sing-box 作为 SOCKS 代理")
-	fmt.Fprintln(w, "  • 生成并下发所有配置文件")
-	fmt.Fprintln(w, "  • 启动相关服务")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "你需要提前准备：")
-	fmt.Fprintln(w, "  • 一台入口节点和一台出口节点（需要 root 权限）")
-	fmt.Fprintln(w, "  • 目标节点的 SSH 登录信息（密码或私钥）")
-	fmt.Fprintln(w, "  • 一个 Cloudflare API Token（需要 DNS 编辑权限）")
-	fmt.Fprintln(w, "  • 一个对外域名（面板和代理入口通常共用）")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "接下来是「配置菜单」：可按任意顺序填写各项，随时返回修改，")
-	fmt.Fprintln(w, "确认无误后再保存或部署，无需一次性从头填到尾。")
+	fmt.Fprintln(w, renderWelcome(shortenPath(wd)))
+}
+
+func shortenPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(filepath.Separator)) {
+		return "~" + strings.TrimPrefix(path, home)
+	}
+	return path
 }
 
 func printSummary(w io.Writer, project model.Project, rc model.RunContext) {

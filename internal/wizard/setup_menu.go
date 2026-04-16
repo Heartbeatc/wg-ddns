@@ -29,76 +29,70 @@ func RunSetupMenu(w io.Writer, draft *SetupDraft) (*SetupResult, error) {
 	p := NewPrompter(w)
 
 	printWelcome(w)
-	fmt.Fprint(w, "\n按回车进入配置菜单...")
+	fmt.Fprint(w, "\n按回车开始 6 步引导...")
 	p.WaitEnter()
+	if p.Err() != nil {
+		return nil, p.Err()
+	}
 
 	for {
+		runGuidedSetup(w, p, draft)
 		if p.Err() != nil {
 			return nil, p.Err()
 		}
 
-		fmt.Fprintln(w, "\n========================================")
-		fmt.Fprintln(w, "  配置菜单（可任意顺序修改，完成后保存或部署）")
-		fmt.Fprintln(w, "========================================")
-		fmt.Fprintln(w)
-
-		opts := []string{
-			"运行位置 — " + draft.statusRunLocation(),
-			"入口节点 — " + draft.statusEntry(),
-			"出口节点 — " + draft.statusExit(),
-			"Cloudflare — " + draft.statusCloudflare(),
-			"域名 — " + draft.statusDomains(),
-			"出口管理 DDNS — " + draft.statusExitDDNS(),
-			"入口自动修复 — " + draft.statusEntryAuto(),
-			"面板与检查 — " + draft.statusPanel(),
-			"逐项验证（SSH / Cloudflare / 域名）",
-			"查看部署摘要（可从摘要跳转修改）",
-			"开始部署（校验后保存并部署）",
-			"保存并退出（完整配置写入 wgstack.json，未完成内容写入草稿）",
-			"放弃（不保存）",
-		}
-
-		ch := p.Select("请选择一项:", opts)
-		if p.Err() != nil {
-			return nil, p.Err()
-		}
-
-		switch ch {
-		case 0:
-			stepRunLocation(w, p, draft)
-		case 1:
-			stepEntryNode(w, p, draft)
-		case 2:
-			stepExitNode(w, p, draft)
-		case 3:
-			stepCloudflare(w, p, draft)
-		case 4:
-			stepDomains(w, p, draft)
-		case 5:
-			stepExitDDNS(w, p, draft)
-		case 6:
-			stepEntryAuto(w, p, draft)
-		case 7:
-			stepPanelHealth(w, p, draft)
-		case 8:
-			runVerifySubmenu(w, p, draft)
-		case 9:
-			if done, act := runSummaryMenu(w, p, draft); done {
-				return finalizeSetupResult(draft, act)
-			}
-		case 10:
-			if tryDeploy(w, p, draft) {
-				return finalizeSetupResult(draft, ActionDeploy)
-			}
-		case 11:
-			if trySave(w, draft) {
-				return finalizeSetupResult(draft, ActionSaveOnly)
-			}
-		case 12:
-			fmt.Fprintln(w, "\n已放弃，未写入配置文件。")
-			return &SetupResult{Action: ActionCancel}, nil
+		fmt.Fprintln(w, renderPanelTitle("配置摘要与下一步"))
+		if done, act := runSummaryMenu(w, p, draft); done {
+			return finalizeSetupResult(draft, act)
 		}
 	}
+}
+
+func runGuidedSetup(w io.Writer, p *Prompter, draft *SetupDraft) {
+	printProgressHeader(w, 1, 6, "运行位置", "先确认你现在在哪台机器上运行 wgstack。")
+	stepRunLocation(w, p, draft)
+	if p.Err() != nil {
+		return
+	}
+
+	printProgressHeader(w, 2, 6, "入口节点", "填写入口节点公网 IP 和 SSH 管理信息。")
+	stepEntryNode(w, p, draft)
+	if p.Err() != nil {
+		return
+	}
+
+	printProgressHeader(w, 3, 6, "出口节点", "填写出口节点公网 IP 和 SSH 管理信息。")
+	stepExitNode(w, p, draft)
+	if p.Err() != nil {
+		return
+	}
+
+	printProgressHeader(w, 4, 6, "Cloudflare", "填写 Zone 和 API Token。")
+	stepCloudflare(w, p, draft)
+	if p.Err() != nil {
+		return
+	}
+
+	printProgressHeader(w, 5, 6, "域名", "默认只问一个入口业务域名；面板和 WG 默认共用。")
+	stepDomains(w, p, draft)
+	if p.Err() != nil {
+		return
+	}
+
+	printProgressHeader(w, 6, 6, "自动化与检查", "设置出口 DDNS、入口自动修复，以及健康检查参数。")
+	stepExitDDNS(w, p, draft)
+	if p.Err() != nil {
+		return
+	}
+	stepEntryAuto(w, p, draft)
+	if p.Err() != nil {
+		return
+	}
+	stepPanelHealth(w, p, draft)
+}
+
+func printProgressHeader(w io.Writer, step, total int, title, hint string) {
+	fmt.Fprintln(w, renderProgress(step, total, title, hint))
 }
 
 func finalizeSetupResult(d *SetupDraft, act SetupAction) (*SetupResult, error) {
@@ -110,7 +104,7 @@ func finalizeSetupResult(d *SetupDraft, act SetupAction) (*SetupResult, error) {
 }
 
 func stepRunLocation(w io.Writer, p *Prompter, d *SetupDraft) {
-	fmt.Fprintln(w, "\n--- 运行位置 ---")
+	fmt.Fprintln(w, renderSectionTitle("运行位置"))
 	fmt.Fprintln(w, "  本工具通过 SSH 远程配置目标节点；若在某台目标节点本机运行，可跳过该节点 SSH。")
 	idx := p.Select("你当前在哪台机器上运行 wgstack？", RunLocationOptions)
 	if p.Err() != nil {
@@ -129,7 +123,7 @@ func stepEntryNode(w io.Writer, p *Prompter, d *SetupDraft) {
 		fmt.Fprintln(w, "\n请先配置「运行位置」。")
 		return
 	}
-	fmt.Fprintln(w, "\n--- 入口节点 ---")
+	fmt.Fprintln(w, renderSectionTitle("入口节点"))
 	ni := collectNodeInfoWithDefaults(w, p, "入口节点", d.RC.EntryIsLocal, d.Project.Nodes.US)
 	if p.Err() != nil {
 		return
@@ -143,7 +137,7 @@ func stepExitNode(w io.Writer, p *Prompter, d *SetupDraft) {
 		fmt.Fprintln(w, "\n请先配置「运行位置」。")
 		return
 	}
-	fmt.Fprintln(w, "\n--- 出口节点 ---")
+	fmt.Fprintln(w, renderSectionTitle("出口节点"))
 	ni := collectNodeInfoWithDefaults(w, p, "出口节点", d.RC.ExitIsLocal, d.Project.Nodes.HK)
 	if p.Err() != nil {
 		return
@@ -166,7 +160,7 @@ func applyNodeInput(n *model.Node, ni nodeInput) {
 }
 
 func stepCloudflare(w io.Writer, p *Prompter, d *SetupDraft) {
-	fmt.Fprintln(w, "\n--- Cloudflare ---")
+	fmt.Fprintln(w, renderSectionTitle("Cloudflare"))
 	zoneDef := strings.TrimSpace(d.Project.Cloudflare.Zone)
 	zone := p.LineWith("Cloudflare Zone 域名（主域名，如 example.com）", zoneDef, validateDomain)
 	if p.Err() != nil {
@@ -196,64 +190,33 @@ func stepCloudflare(w io.Writer, p *Prompter, d *SetupDraft) {
 }
 
 func stepDomains(w io.Writer, p *Prompter, d *SetupDraft) {
-	fmt.Fprintln(w, "\n--- 域名 ---")
+	fmt.Fprintln(w, renderSectionTitle("域名"))
 	cfZone := strings.TrimSpace(d.Project.Cloudflare.Zone)
 	if cfZone == "" {
 		fmt.Fprintln(w, "  建议先配置 Cloudflare Zone，以便使用合理默认。")
 	}
 
-	fmt.Fprintln(w, "  多数情况下面板与代理入口共用同一域名，仅端口不同。")
+	fmt.Fprintln(w, "  默认只需要一个入口业务域名。")
+	fmt.Fprintln(w, "  面板、VLESS 链接和 WireGuard Endpoint 默认都会复用它。")
 	entryDef := strings.TrimSpace(d.Project.Domains.Entry)
 	if entryDef == "" {
 		entryDef = cfZone
 	}
-	entryDomain := p.LineWith("对外域名（面板和代理共用）", entryDef, validateDomain)
-	if p.Err() != nil {
-		return
-	}
-
-	panelSeparate := p.Confirm("面板访问域名是否与此不同？", false)
-	var panelDomain string
-	if panelSeparate {
-		pd := strings.TrimSpace(d.Project.Domains.Panel)
-		if pd == "" || pd == entryDomain {
-			pd = "panel." + cfZone
-		}
-		panelDomain = p.LineWith("面板域名", pd, validateDomain)
-	} else {
-		panelDomain = entryDomain
-	}
-	if p.Err() != nil {
-		return
-	}
-
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  WireGuard Endpoint 默认复用对外域名；单独填写也应为域名。")
-	wgSeparate := p.Confirm("WireGuard Endpoint 使用单独域名？", false)
-	var wgDomain string
-	if wgSeparate {
-		wd := strings.TrimSpace(d.Project.Domains.WireGuard)
-		if wd == "" || wd == entryDomain {
-			wd = "wg." + cfZone
-		}
-		wgDomain = p.LineWith("WireGuard Endpoint 域名", wd, validateDomain)
-	} else {
-		wgDomain = entryDomain
-	}
+	entryDomain := p.LineWith("入口业务域名", entryDef, validateDomain)
 	if p.Err() != nil {
 		return
 	}
 
 	d.Project.Domains = model.Domains{
 		Entry:     entryDomain,
-		Panel:     panelDomain,
-		WireGuard: wgDomain,
+		Panel:     entryDomain,
+		WireGuard: entryDomain,
 	}
-	fmt.Fprintln(w, "  已保存（内存中）。")
+	fmt.Fprintf(w, "  已保存：面板 / 代理入口 / WG Endpoint 均使用 %s\n", entryDomain)
 }
 
 func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
-	fmt.Fprintln(w, "\n--- 出口管理 DDNS ---")
+	fmt.Fprintln(w, renderSectionTitle("出口管理 DDNS"))
 	fmt.Fprintln(w, "  家宽等动态公网 IP 场景下，可在出口节点自动维护 SSH 管理域名。")
 	d.ExitDDNSTouched = true
 
@@ -290,7 +253,7 @@ func stepExitDDNS(w io.Writer, p *Prompter, d *SetupDraft) {
 }
 
 func stepEntryAuto(w io.Writer, p *Prompter, d *SetupDraft) {
-	fmt.Fprintln(w, "\n--- 入口自动修复 ---")
+	fmt.Fprintln(w, renderSectionTitle("入口自动修复"))
 	fmt.Fprintln(w, "  入口节点定时检测 IP / DNS 漂移并自动修复。")
 	d.EntryAutoTouched = true
 
@@ -305,7 +268,7 @@ func stepEntryAuto(w io.Writer, p *Prompter, d *SetupDraft) {
 }
 
 func stepPanelHealth(w io.Writer, p *Prompter, d *SetupDraft) {
-	fmt.Fprintln(w, "\n--- 面板与检查 ---")
+	fmt.Fprintln(w, renderSectionTitle("面板与检查"))
 	ob := p.LineWith("面板出站标签", d.Project.PanelGuide.OutboundTag, nil)
 	ru := p.LineWith("专用线路用户标识", d.Project.PanelGuide.RouteUser, nil)
 	if p.Err() != nil {
@@ -335,14 +298,12 @@ func stepPanelHealth(w io.Writer, p *Prompter, d *SetupDraft) {
 
 func runSummaryMenu(w io.Writer, p *Prompter, d *SetupDraft) (done bool, act SetupAction) {
 	for {
-		fmt.Fprintln(w, "\n========================================")
-		fmt.Fprintln(w, "  部署摘要")
-		fmt.Fprintln(w, "========================================")
+		fmt.Fprintln(w, renderPanelTitle("部署摘要"))
 		printSummary(w, d.Project, d.RC)
 
 		sub := []string{
-			"返回配置主菜单",
-			"确认部署（校验后保存并部署）",
+			"开始部署",
+			"逐项验证（SSH / Cloudflare / 域名）",
 			"运行位置",
 			"入口节点",
 			"出口节点",
@@ -351,6 +312,9 @@ func runSummaryMenu(w io.Writer, p *Prompter, d *SetupDraft) (done bool, act Set
 			"出口管理 DDNS",
 			"入口自动修复",
 			"面板与检查",
+			"重新走一遍 6 步引导",
+			"保存并退出",
+			"放弃（不保存）",
 		}
 		ch := p.Select("请选择:", sub)
 		if p.Err() != nil {
@@ -358,11 +322,11 @@ func runSummaryMenu(w io.Writer, p *Prompter, d *SetupDraft) (done bool, act Set
 		}
 		switch ch {
 		case 0:
-			return false, ActionCancel
-		case 1:
 			if tryDeploy(w, p, d) {
 				return true, ActionDeploy
 			}
+		case 1:
+			runVerifySubmenu(w, p, d)
 		case 2:
 			stepRunLocation(w, p, d)
 		case 3:
@@ -379,6 +343,15 @@ func runSummaryMenu(w io.Writer, p *Prompter, d *SetupDraft) (done bool, act Set
 			stepEntryAuto(w, p, d)
 		case 9:
 			stepPanelHealth(w, p, d)
+		case 10:
+			return false, ActionCancel
+		case 11:
+			if trySave(w, d) {
+				return true, ActionSaveOnly
+			}
+		case 12:
+			fmt.Fprintln(w, "\n已放弃，未写入配置文件。")
+			return true, ActionCancel
 		}
 	}
 }
@@ -393,7 +366,7 @@ func trySave(w io.Writer, d *SetupDraft) bool {
 			fmt.Fprintf(w, "\n配置已写入 %s，但清理草稿失败：%v\n", config.DefaultPath, err)
 			return false
 		}
-		fmt.Fprintf(w, "\n配置已写入 %s\n", config.DefaultPath)
+		fmt.Fprintf(w, "\n配置已保存。\n  正式配置: %s\n", config.DefaultPath)
 		return true
 	}
 
@@ -401,8 +374,8 @@ func trySave(w io.Writer, d *SetupDraft) bool {
 		fmt.Fprintf(w, "\n保存草稿失败：%v\n", err)
 		return false
 	}
-	fmt.Fprintf(w, "\n配置尚未完整，已将当前进度保存到 %s\n", config.DraftPath)
-	fmt.Fprintln(w, "你可以稍后再次运行 wgstack 继续编辑。")
+	fmt.Fprintln(w, "\n当前设置还没填完，但进度已经保存。")
+	fmt.Fprintln(w, "下次再次运行 wgstack 会自动继续。")
 	return true
 }
 

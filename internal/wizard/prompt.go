@@ -38,9 +38,9 @@ func (p *Prompter) LineWith(prompt, defaultVal string, validate func(string) str
 	}
 	for {
 		if defaultVal != "" {
-			fmt.Fprintf(p.writer, "%s [%s]: ", prompt, defaultVal)
+			fmt.Fprintf(p.writer, "%s %s: ", promptLabelStyle.Render(prompt), helpStyle.Render("["+defaultVal+"]"))
 		} else {
-			fmt.Fprintf(p.writer, "%s: ", prompt)
+			fmt.Fprintf(p.writer, "%s: ", promptLabelStyle.Render(prompt))
 		}
 		line, err := p.reader.ReadString('\n')
 		if err != nil {
@@ -52,12 +52,12 @@ func (p *Prompter) LineWith(prompt, defaultVal string, validate func(string) str
 			val = defaultVal
 		}
 		if val == "" {
-			fmt.Fprintln(p.writer, "  此项必填，请输入。")
+			fmt.Fprintln(p.writer, warnTextStyle.Render("  此项必填，请输入。"))
 			continue
 		}
 		if validate != nil {
 			if msg := validate(val); msg != "" {
-				fmt.Fprintf(p.writer, "  %s\n", msg)
+				fmt.Fprintf(p.writer, "%s\n", warnTextStyle.Render("  "+msg))
 				continue
 			}
 		}
@@ -70,7 +70,7 @@ func (p *Prompter) Password(prompt string) string {
 		return ""
 	}
 	for {
-		fmt.Fprintf(p.writer, "%s: ", prompt)
+		fmt.Fprintf(p.writer, "%s: ", promptLabelStyle.Render(prompt))
 		password, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(p.writer)
 		if err != nil {
@@ -79,7 +79,7 @@ func (p *Prompter) Password(prompt string) string {
 		}
 		result := strings.TrimSpace(string(password))
 		if result == "" {
-			fmt.Fprintln(p.writer, "  此项必填，请输入。")
+			fmt.Fprintln(p.writer, warnTextStyle.Render("  此项必填，请输入。"))
 			continue
 		}
 		return result
@@ -92,7 +92,7 @@ func (p *Prompter) PasswordOptional(prompt string) string {
 	if p.err != nil {
 		return ""
 	}
-	fmt.Fprintf(p.writer, "%s（直接回车保留原值）: ", prompt)
+	fmt.Fprintf(p.writer, "%s %s: ", promptLabelStyle.Render(prompt), helpStyle.Render("（直接回车保留原值）"))
 	password, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(p.writer)
 	if err != nil {
@@ -106,12 +106,12 @@ func (p *Prompter) Select(prompt string, options []string) int {
 	if p.err != nil {
 		return 0
 	}
-	fmt.Fprintln(p.writer, prompt)
+	fmt.Fprintln(p.writer, promptLabelStyle.Render(prompt))
 	for i, opt := range options {
-		fmt.Fprintf(p.writer, "  %d) %s\n", i+1, opt)
+		fmt.Fprintf(p.writer, "  %s %s\n", optionIndexStyle.Render(fmt.Sprintf("%d)", i+1)), optionTextStyle.Render(opt))
 	}
 	for {
-		fmt.Fprintf(p.writer, "请选择 [1-%d]: ", len(options))
+		fmt.Fprintf(p.writer, "%s ", promptLabelStyle.Render(fmt.Sprintf("请选择 [1-%d]:", len(options))))
 		line, err := p.reader.ReadString('\n')
 		if err != nil {
 			p.err = err
@@ -121,7 +121,7 @@ func (p *Prompter) Select(prompt string, options []string) int {
 		if err == nil && n >= 1 && n <= len(options) {
 			return n - 1
 		}
-		fmt.Fprintf(p.writer, "  请输入 1 到 %d 之间的数字。\n", len(options))
+		fmt.Fprintf(p.writer, "%s\n", warnTextStyle.Render(fmt.Sprintf("  请输入 1 到 %d 之间的数字。", len(options))))
 	}
 }
 
@@ -133,7 +133,7 @@ func (p *Prompter) Confirm(prompt string, defaultYes bool) bool {
 	if !defaultYes {
 		hint = "[y/N]"
 	}
-	fmt.Fprintf(p.writer, "%s %s: ", prompt, hint)
+	fmt.Fprintf(p.writer, "%s %s: ", promptLabelStyle.Render(prompt), helpStyle.Render(hint))
 	line, err := p.reader.ReadString('\n')
 	if err != nil {
 		p.err = err
@@ -162,7 +162,7 @@ func (p *Prompter) OptionalLine(prompt string) string {
 	if p.err != nil {
 		return ""
 	}
-	fmt.Fprintf(p.writer, "%s: ", prompt)
+	fmt.Fprintf(p.writer, "%s: ", promptLabelStyle.Render(prompt))
 	line, err := p.reader.ReadString('\n')
 	if err != nil {
 		p.err = err
